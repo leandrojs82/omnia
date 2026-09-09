@@ -5,12 +5,99 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OmnIA — Canivete Suíço Digital</title>
 <style>
-/* tokens e layout entram na Task 1 */
-body { margin: 0; font-family: system-ui, sans-serif; }
+:root {
+  --bg: #0d1117; --surface: #161b22; --surface-2: #1c2430;
+  --borda: #2a3441; --texto: #e6edf3; --texto-fraco: #8b949e;
+  --acento: #22d3ee; --acento-2: #a78bfa;
+  --ok: #4ade80; --erro: #f87171;
+  --mono: ui-monospace, "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  --r: 10px;
+}
+[data-tema="light"] {
+  --bg: #f6f8fa; --surface: #ffffff; --surface-2: #eef2f6;
+  --borda: #d6dee6; --texto: #1f2933; --texto-fraco: #5b6b7c;
+  --acento: #0891b2; --acento-2: #7c3aed;
+  --ok: #15803d; --erro: #b91c1c;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--texto);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Inter, sans-serif;
+  overflow-x: hidden;
+}
+header {
+  position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 12px;
+  height: 58px; padding: 0 16px;
+  background: var(--surface); border-bottom: 1px solid var(--borda);
+}
+.logo { font-weight: 700; letter-spacing: -.4px; white-space: nowrap; }
+.logo span { color: var(--acento); }
+#busca {
+  flex: 1; max-width: 520px; height: 36px; padding: 0 12px;
+  background: var(--bg); color: var(--texto);
+  border: 1px solid var(--borda); border-radius: var(--r); outline: none;
+}
+#busca:focus { border-color: var(--acento); }
+.icone-btn {
+  height: 36px; min-width: 36px; padding: 0 10px; cursor: pointer;
+  background: var(--surface-2); color: var(--texto);
+  border: 1px solid var(--borda); border-radius: var(--r);
+}
+.icone-btn:hover { border-color: var(--acento); }
+#btn-menu { display: none; }
+
+.wrap { display: flex; align-items: flex-start; }
+#sidebar {
+  position: sticky; top: 58px; flex: 0 0 260px; width: 260px;
+  height: calc(100vh - 58px); overflow-y: auto; padding: 12px;
+  background: var(--surface); border-right: 1px solid var(--borda);
+}
+#main { flex: 1; min-width: 0; padding: 24px; max-width: 900px; }
+
+.cat > button {
+  display: flex; justify-content: space-between; width: 100%; padding: 8px 10px;
+  cursor: pointer; text-align: left; font-size: 13px; font-weight: 600;
+  color: var(--texto-fraco); background: none; border: 0; border-radius: 8px;
+}
+.cat > button:hover { background: var(--surface-2); color: var(--texto); }
+.cat ul { list-style: none; margin: 0 0 6px; padding: 0 0 0 10px; }
+.cat[data-aberta="nao"] ul { display: none; }
+.cat a {
+  display: block; padding: 6px 10px; border-radius: 8px;
+  color: var(--texto); text-decoration: none; font-size: 14px;
+}
+.cat a:hover { background: var(--surface-2); }
+.cat a[data-ativa="sim"] { background: var(--surface-2); color: var(--acento); }
+.vazia { padding: 6px 10px; font-size: 13px; color: var(--texto-fraco); font-style: italic; }
+
+#overlay { display: none; }
+@media (max-width: 767px) {
+  #btn-menu { display: block; }
+  #main { padding: 16px; }
+  #sidebar {
+    position: fixed; top: 58px; left: 0; z-index: 25;
+    transform: translateX(-100%); transition: transform .2s;
+  }
+  #sidebar[data-aberta="sim"] { transform: none; }
+  #overlay[data-aberta="sim"] {
+    display: block; position: fixed; inset: 58px 0 0; z-index: 20;
+    background: rgba(0,0,0,.5);
+  }
+}
 </style>
 </head>
 <body>
-<div id="app">OmnIA</div>
+<header>
+  <button class="icone-btn" id="btn-menu" aria-label="Menu">☰</button>
+  <div class="logo">Omn<span>IA</span></div>
+  <input id="busca" type="search" placeholder="Buscar ferramenta…  (Ctrl+K)" autocomplete="off">
+  <button class="icone-btn" id="btn-tema" aria-label="Alternar tema">🌙</button>
+</header>
+<div class="wrap">
+  <nav id="sidebar"><div id="lista-cats"></div></nav>
+  <main id="main"></main>
+</div>
+<div id="overlay"></div>
 <script>
 "use strict";
 const OmnIA = { lib: {} };
@@ -44,14 +131,14 @@ TESTES.push({ nome: "runner funciona", fn: () => assertEq(1 + 1, 2) });
 function renderTestes(el) {
   const r = rodarTestes();
   const linhas = r.falhas.map(f =>
-    '<li style="color:#f87171">✗ ' + f.nome + ' — ' + f.erro + '</li>'
+    '<li style="color:var(--erro)">✗ ' + f.nome + ' — ' + f.erro + '</li>'
   ).join("");
   el.innerHTML =
     '<h1>Testes: ' + r.passou + '/' + r.total + '</h1>' +
-    (r.falhas.length ? '<ul>' + linhas + '</ul>' : '<p style="color:#4ade80">Todos passaram.</p>');
+    (r.falhas.length ? '<ul>' + linhas + '</ul>' : '<p style="color:var(--ok)">Todos passaram.</p>');
 }
 
-if (location.hash === "#/_testes") renderTestes(document.getElementById("app"));
+if (location.hash === "#/_testes") renderTestes(document.getElementById("main"));
 window.addEventListener("hashchange", () => location.reload());
 </script>
 </body>
