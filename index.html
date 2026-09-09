@@ -291,9 +291,14 @@ lib.paraBinario = s => [...new TextEncoder().encode(s || "")]
   .map(b => b.toString(2).padStart(8, "0")).join(" ");
 
 lib.deBinario = s => {
-  const bytes = (s || "").trim().split(/\s+/).filter(Boolean).map(b => parseInt(b, 2));
-  if (bytes.some(isNaN)) throw new Error("Binário inválido");
-  return new TextDecoder().decode(new Uint8Array(bytes));
+  const tokens = (s || "").trim().split(/\s+/).filter(Boolean);
+  if (tokens.some(t => !/^[01]{8}$/.test(t))) throw new Error("Binário inválido");
+  const bytes = tokens.map(b => parseInt(b, 2));
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(bytes));
+  } catch (e) {
+    throw new Error("Binário inválido");
+  }
 };
 
 // Morse: não tem acentos nem caixa, então não é round-trip fiel (ação -> ACAO).
@@ -317,7 +322,8 @@ lib.deMorse = s => (s || "").trim().split("/")
 
 // César: só desloca a-z e A-Z, preserva acentos, dígitos e pontuação.
 lib.cesar = (s, d) => {
-  const n = ((d % 26) + 26) % 26;
+  const desl = Number.isFinite(Number(d)) ? Math.trunc(Number(d)) : 0;
+  const n = ((desl % 26) + 26) % 26;
   return (s || "").replace(/[a-z]/g, c =>
       String.fromCharCode((c.charCodeAt(0) - 97 + n) % 26 + 97))
     .replace(/[A-Z]/g, c =>
@@ -334,6 +340,12 @@ function assertEq(atual, esperado, msg) {
 
 function assertTrue(valor, msg) {
   if (!valor) throw new Error(msg || "esperado valor verdadeiro, recebeu " + JSON.stringify(valor));
+}
+
+function assertThrows(fn, msg) {
+  let lancou = false;
+  try { fn(); } catch (e) { lancou = true; }
+  if (!lancou) throw new Error(msg || "esperava que a função lançasse um erro");
 }
 
 function rodarTestes() {
@@ -581,6 +593,28 @@ TESTES.push({ nome: "césar preserva caixa e não-letras", fn: () => {
   assertEq(lib.cesar("Olá, Mundo!", 0), "Olá, Mundo!");
   assertEq(lib.cesar(lib.cesar("Hello", 13), 13), "Hello", "ROT13 é involutivo");
   assertEq(lib.cesar("abc", -3), "xyz");
+}});
+TESTES.push({ nome: "binário rejeita entrada malformada", fn: () => {
+  assertThrows(() => lib.deBinario("1"), "grupo com contagem de bits errada deveria lançar");
+  assertThrows(() => lib.deBinario("111111111"), "grupo com valor > 255 deveria lançar");
+  assertThrows(() => lib.deBinario("0100000x"), "grupo com caractere não binário deveria lançar");
+  assertThrows(() => lib.deBinario("10000000"), "bytes 8-bit válidos mas UTF-8 inválido deveria lançar");
+}});
+TESTES.push({ nome: "binário round-trip com acentos e emoji", fn: () => {
+  assertEq(lib.deBinario(lib.paraBinario("Ação 🎲")), "Ação 🎲");
+}});
+TESTES.push({ nome: "césar com deslocamento inválido não devolve NUL", fn: () => {
+  assertEq(lib.cesar("Hello", NaN), "Hello");
+  assertEq(lib.cesar("Hello", undefined), "Hello");
+  assertEq(lib.cesar("Hello", "abc"), "Hello");
+}});
+TESTES.push({ nome: "césar com deslocamento 26 retorna o texto original", fn: () => {
+  assertEq(lib.cesar("Hello, Mundo!", 26), "Hello, Mundo!");
+}});
+TESTES.push({ nome: "morse lida com símbolo desconhecido, espaços extras e barra final", fn: () => {
+  assertEq(lib.deMorse("... ??? ..."), "SS");
+  assertEq(lib.deMorse("...   ---   ...  "), "SOS");
+  assertEq(lib.deMorse("... --- ... /"), "SOS");
 }});
 
 /* ---------- render provisório do runner ---------- */
