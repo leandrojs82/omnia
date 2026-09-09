@@ -330,6 +330,57 @@ lib.cesar = (s, d) => {
       String.fromCharCode((c.charCodeAt(0) - 65 + n) % 26 + 65));
 };
 
+/* ---------- data e hora ---------- */
+const DIA_MS = 86400000;
+
+lib.parseData = iso => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((iso || "").trim());
+  if (!m) throw new Error("Data inválida: " + iso);
+  const d = new Date(+m[1], +m[2] - 1, +m[3], 12, 0, 0, 0);
+  if (d.getMonth() !== +m[2] - 1) throw new Error("Data inexistente: " + iso);
+  return d;
+};
+
+lib.hojeIso = () => {
+  const d = new Date();
+  return d.getFullYear() + "-" +
+    String(d.getMonth() + 1).padStart(2, "0") + "-" +
+    String(d.getDate()).padStart(2, "0");
+};
+
+lib.diasEntre = (a, b) =>
+  Math.round(Math.abs(lib.parseData(b) - lib.parseData(a)) / DIA_MS);
+
+lib.idadeExata = (nascIso, refIso) => {
+  const n = lib.parseData(nascIso), r = lib.parseData(refIso || lib.hojeIso());
+  if (r < n) throw new Error("A data de referência é anterior ao nascimento.");
+  let anos = r.getFullYear() - n.getFullYear();
+  let meses = r.getMonth() - n.getMonth();
+  let dias = r.getDate() - n.getDate();
+  if (dias < 0) {
+    meses--;
+    dias += new Date(r.getFullYear(), r.getMonth(), 0).getDate();
+  }
+  if (meses < 0) { anos--; meses += 12; }
+  return { anos, meses, dias, totalDias: Math.round((r - n) / DIA_MS) };
+};
+
+lib.diasUteis = (aIso, bIso, feriados = []) => {
+  let a = lib.parseData(aIso), b = lib.parseData(bIso);
+  if (a > b) [a, b] = [b, a];
+  const fer = new Set(feriados.map(f => f.trim()).filter(Boolean));
+  let n = 0;
+  for (const d = new Date(a); d <= b; d.setDate(d.getDate() + 1)) {
+    const dow = d.getDay();
+    if (dow === 0 || dow === 6) continue;
+    const iso = d.getFullYear() + "-" +
+      String(d.getMonth() + 1).padStart(2, "0") + "-" +
+      String(d.getDate()).padStart(2, "0");
+    if (!fer.has(iso)) n++;
+  }
+  return n;
+};
+
 /* ---------- runner de testes ---------- */
 const TESTES = [];
 
@@ -615,6 +666,29 @@ TESTES.push({ nome: "morse lida com símbolo desconhecido, espaços extras e bar
   assertEq(lib.deMorse("... ??? ..."), "SS");
   assertEq(lib.deMorse("...   ---   ...  "), "SOS");
   assertEq(lib.deMorse("... --- ... /"), "SOS");
+}});
+TESTES.push({ nome: "parseData ancora ao meio-dia local", fn: () => {
+  const d = lib.parseData("2026-03-15");
+  assertEq(d.getFullYear(), 2026);
+  assertEq(d.getMonth(), 2);
+  assertEq(d.getDate(), 15, "não pode escorregar por fuso");
+}});
+TESTES.push({ nome: "diasEntre", fn: () => {
+  assertEq(lib.diasEntre("2026-01-01", "2026-01-31"), 30);
+  assertEq(lib.diasEntre("2026-01-31", "2026-01-01"), 30, "é absoluto");
+  assertEq(lib.diasEntre("2024-02-28", "2024-03-01"), 2, "2024 é bissexto");
+  assertEq(lib.diasEntre("2026-01-01", "2026-01-01"), 0);
+}});
+TESTES.push({ nome: "idadeExata", fn: () => {
+  assertEq(lib.idadeExata("2000-01-15", "2026-01-14"), { anos: 25, meses: 11, dias: 30, totalDias: 9496 });
+  const r = lib.idadeExata("2000-06-10", "2026-06-10");
+  assertEq(r.anos, 26); assertEq(r.meses, 0); assertEq(r.dias, 0);
+}});
+TESTES.push({ nome: "diasUteis conta seg-sex e exclui feriados", fn: () => {
+  assertEq(lib.diasUteis("2026-01-05", "2026-01-09"), 5, "seg a sex");
+  assertEq(lib.diasUteis("2026-01-05", "2026-01-11"), 5, "inclui fim de semana");
+  assertEq(lib.diasUteis("2026-01-05", "2026-01-09", ["2026-01-07"]), 4);
+  assertEq(lib.diasUteis("2026-01-10", "2026-01-11"), 0, "só sáb e dom");
 }});
 
 /* ---------- render provisório do runner ---------- */
@@ -985,6 +1059,66 @@ TOOLS.push({
         ui.btn("Decifrar", () => s.set(lib.cesar(a.value, -lib.inteiro(d.value, -25, 25, 3))), "secundaria"),
         ui.btn("ROT13", () => { d.value = 13; s.set(lib.cesar(a.value, 13)); }, "secundaria")
       ), s);
+  }
+});
+
+TOOLS.push({
+  id: "contar-dias", cat: "data", tipo: "nativa",
+  nome: "Contar Dias Entre Datas", desc: "Quantos dias separam duas datas",
+  tags: ["diferenca", "prazo", "intervalo", "quantos dias"],
+  render(el) {
+    const a = ui.campo("Data inicial", "date", { value: lib.hojeIso() });
+    const b = ui.campo("Data final", "date", { value: lib.hojeIso() });
+    const s = ui.saida();
+    ui.montar(el, ui.linha(a, b), ui.btn("Calcular", () => {
+      try {
+        const d = lib.diasEntre(a.value, b.value);
+        s.set(d + " dias\n" +
+          (d / 7).toFixed(1) + " semanas\n" +
+          (d / 30.44).toFixed(1) + " meses\n" +
+          (d / 365.25).toFixed(2) + " anos");
+      } catch (e) { s.set("Erro: " + e.message); }
+    }), s);
+  }
+});
+
+TOOLS.push({
+  id: "idade-exata", cat: "data", tipo: "nativa",
+  nome: "Idade Exata", desc: "Anos, meses e dias vividos até uma data",
+  tags: ["aniversario", "quantos anos", "nascimento"],
+  render(el) {
+    const n = ui.campo("Data de nascimento", "date");
+    const r = ui.campo("Calcular até", "date", { value: lib.hojeIso() });
+    const s = ui.saida();
+    ui.montar(el, ui.linha(n, r), ui.btn("Calcular", () => {
+      try {
+        const i = lib.idadeExata(n.value, r.value);
+        s.set(i.anos + " anos, " + i.meses + " meses e " + i.dias + " dias\n\n" +
+          "Total: " + i.totalDias.toLocaleString("pt-BR") + " dias vividos\n" +
+          "        " + (i.totalDias * 24).toLocaleString("pt-BR") + " horas");
+      } catch (e) { s.set("Erro: " + e.message); }
+    }), s);
+  }
+});
+
+TOOLS.push({
+  id: "dias-uteis", cat: "data", tipo: "nativa",
+  nome: "Calculadora de Dias Úteis", desc: "Conta apenas segunda a sexta, descontando feriados",
+  tags: ["prazo", "trabalho", "expediente", "feriado"],
+  render(el) {
+    const a = ui.campo("Data inicial", "date", { value: lib.hojeIso() });
+    const b = ui.campo("Data final", "date", { value: lib.hojeIso() });
+    const f = ui.area("Feriados a excluir — uma data AAAA-MM-DD por linha (opcional)");
+    const s = ui.saida();
+    ui.montar(el, ui.linha(a, b), f, ui.btn("Calcular", () => {
+      try {
+        const fer = f.value.split("\n").map(x => x.trim()).filter(Boolean);
+        const uteis = lib.diasUteis(a.value, b.value, fer);
+        const corridos = lib.diasEntre(a.value, b.value) + 1;
+        s.set(uteis + " dias úteis\n" + corridos + " dias corridos\n" +
+          (corridos - uteis) + " dias não úteis (fins de semana e feriados informados)");
+      } catch (e) { s.set("Erro: " + e.message); }
+    }), s);
   }
 });
 
