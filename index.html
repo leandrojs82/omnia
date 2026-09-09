@@ -147,6 +147,16 @@ TESTES.push({ nome: "getTool encontra e erra corretamente", fn: () => {
   assertEq(getTool("__nao_existe__"), undefined);
   if (TOOLS.length) assertEq(getTool(TOOLS[0].id).id, TOOLS[0].id);
 }});
+TESTES.push({ nome: "estado aberta da categoria respeita recolhidas e ativa", fn: () => {
+  RECOLHIDAS.add("cat-x");
+  assertEq(estadoAbertaCategoria("cat-x", 3, true), "sim", "ativa vence mesmo recolhida");
+  RECOLHIDAS.delete("cat-x");
+  assertEq(estadoAbertaCategoria("cat-y", 2, false), "sim", "com ferramentas e nao recolhida deve abrir");
+  RECOLHIDAS.add("cat-y");
+  assertEq(estadoAbertaCategoria("cat-y", 2, false), "nao", "recolhida deve fechar");
+  RECOLHIDAS.delete("cat-y");
+  assertEq(estadoAbertaCategoria("cat-z", 0, false), "nao", "sem ferramentas deve ficar fechada");
+}});
 
 /* ---------- render provisório do runner ---------- */
 function renderTestes(el) {
@@ -184,6 +194,14 @@ const getTool = id => TOOLS.find(t => t.id === id);
 /* ---------- sidebar ---------- */
 const SELOS = { nativa: "🟢", online: "🔵", script: "🟡" };
 
+const RECOLHIDAS = new Set();
+
+function estadoAbertaCategoria(catId, qtdFerramentas, temAtiva) {
+  if (temAtiva) return "sim";
+  if (!qtdFerramentas) return "nao";
+  return RECOLHIDAS.has(catId) ? "nao" : "sim";
+}
+
 function renderSidebar() {
   const ativa = (location.hash.match(/^#\/([\w-]+)/) || [])[1];
   document.getElementById("lista-cats").innerHTML = CATEGORIAS.map(c => {
@@ -193,8 +211,8 @@ function renderSidebar() {
           (t.id === ativa ? ' data-ativa="sim"' : '') + '>' +
           SELOS[t.tipo] + ' ' + t.nome + '</a></li>').join("")
       : '<li class="vazia">em breve</li>';
-    const aberta = ts.some(t => t.id === ativa) ? "sim" : (ts.length ? "sim" : "nao");
-    return '<div class="cat" data-aberta="' + aberta + '">' +
+    const aberta = estadoAbertaCategoria(c.id, ts.length, ts.some(t => t.id === ativa));
+    return '<div class="cat" data-cat="' + c.id + '" data-aberta="' + aberta + '">' +
       '<button>' + c.icone + ' ' + c.nome + '<span>' + (ts.length || "") + '</span></button>' +
       '<ul>' + itens + '</ul></div>';
   }).join("");
@@ -202,7 +220,10 @@ function renderSidebar() {
   document.querySelectorAll(".cat > button").forEach(b => {
     b.onclick = () => {
       const cat = b.parentElement;
-      cat.dataset.aberta = cat.dataset.aberta === "sim" ? "nao" : "sim";
+      const novo = cat.dataset.aberta === "sim" ? "nao" : "sim";
+      cat.dataset.aberta = novo;
+      if (novo === "nao") RECOLHIDAS.add(cat.dataset.cat);
+      else RECOLHIDAS.delete(cat.dataset.cat);
     };
   });
 }
@@ -213,7 +234,7 @@ function navegar() {
   main.innerHTML = "";
   const id = (location.hash.match(/^#\/([\w-]+)/) || [])[1];
 
-  if (id === "_testes") { renderTestes(main); return; }
+  if (id === "_testes") { renderSidebar(); renderTestes(main); return; }
 
   const tool = id && getTool(id);
   if (tool) {
