@@ -13,6 +13,7 @@
   --overlay: rgba(0, 0, 0, .5);
   --mono: ui-monospace, "JetBrains Mono", "Cascadia Code", Consolas, monospace;
   --r: 10px;
+  --btn-texto: #06222a;
 }
 [data-tema="light"] {
   --bg: #f6f8fa; --surface: #ffffff; --surface-2: #eef2f6;
@@ -20,6 +21,7 @@
   --acento: #0891b2; --acento-2: #7c3aed;
   --ok: #15803d; --erro: #b91c1c;
   --overlay: rgba(15, 23, 32, .35);
+  --btn-texto: #f6f8fa;
 }
 * { box-sizing: border-box; }
 body {
@@ -86,7 +88,7 @@ header {
 .btn {
   padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer;
   border: 1px solid transparent; border-radius: var(--r);
-  background: var(--acento); color: #06222a;
+  background: var(--acento); color: var(--btn-texto);
 }
 .btn:hover { filter: brightness(1.1); }
 .btn.secundaria { background: var(--surface-2); color: var(--texto); border-color: var(--borda); }
@@ -214,6 +216,30 @@ TESTES.push({ nome: "ui.btn dispara o onClick", fn: () => {
   b.click();
   assertEq(n, 1);
 }});
+TESTES.push({ nome: "ui.linha e ui.montar anexam .wrapper quando existe e o nó puro quando não", fn: () => {
+  const campo1 = ui.campo("Nome");
+  const botao1 = ui.btn("ok", () => {});
+  const d = ui.linha(campo1, botao1);
+  assertTrue(d.contains(campo1.wrapper), "linha deveria conter o wrapper do campo");
+  assertTrue(d.querySelector("label") !== null, "wrapper com label deve estar presente na linha");
+  assertTrue(d.contains(botao1), "linha deveria conter o botão puro (sem wrapper)");
+
+  const el = document.createElement("div");
+  const campo2 = ui.campo("Peso");
+  const botao2 = ui.btn("ok", () => {});
+  ui.montar(el, campo2, botao2);
+  assertTrue(el.contains(campo2.wrapper), "montar deveria conter o wrapper do campo");
+  assertTrue(el.querySelector("label") !== null, "wrapper com label deve estar presente em montar");
+  assertTrue(el.contains(botao2), "montar deveria conter o botão puro (sem wrapper)");
+}});
+TESTES.push({ nome: "ui.saida alterna data-tem ao definir e limpar o texto", fn: () => {
+  const s = ui.saida();
+  assertEq(s.dataset.tem, "nao", "deve iniciar oculto");
+  s.set("texto");
+  assertEq(s.dataset.tem, "sim", "deve aparecer com conteúdo");
+  s.set("");
+  assertEq(s.dataset.tem, "nao", "deve ocultar quando vazio");
+}});
 
 /* ---------- render provisório do runner ---------- */
 function renderTestes(el) {
@@ -307,7 +333,10 @@ const ui = {
     ta.style.cssText = "position:fixed;opacity:0";
     document.body.appendChild(ta);
     ta.select();
-    try { document.execCommand("copy"); fim(); }
+    try {
+      const ok = document.execCommand("copy");
+      if (ok) fim(); else ui.toast("Não foi possível copiar");
+    }
     catch (e) { ui.toast("Não foi possível copiar"); }
     ta.remove();
   },
