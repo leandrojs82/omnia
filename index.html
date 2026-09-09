@@ -285,6 +285,45 @@ lib.inteiro = (valor, min, max, padrao) => {
   return Math.min(max, Math.max(min, truncado));
 };
 
+// Binário: cada byte UTF-8 vira 8 bits separados por espaço. Round-trip exato
+// (inclusive acentos e emoji) porque usa TextEncoder/TextDecoder.
+lib.paraBinario = s => [...new TextEncoder().encode(s || "")]
+  .map(b => b.toString(2).padStart(8, "0")).join(" ");
+
+lib.deBinario = s => {
+  const bytes = (s || "").trim().split(/\s+/).filter(Boolean).map(b => parseInt(b, 2));
+  if (bytes.some(isNaN)) throw new Error("Binário inválido");
+  return new TextDecoder().decode(new Uint8Array(bytes));
+};
+
+// Morse: não tem acentos nem caixa, então não é round-trip fiel (ação -> ACAO).
+const MORSE = {
+  A:".-",B:"-...",C:"-.-.",D:"-..",E:".",F:"..-.",G:"--.",H:"....",I:"..",J:".---",
+  K:"-.-",L:".-..",M:"--",N:"-.",O:"---",P:".--.",Q:"--.-",R:".-.",S:"...",T:"-",
+  U:"..-",V:"...-",W:".--",X:"-..-",Y:"-.--",Z:"--..",
+  0:"-----",1:".----",2:"..---",3:"...--",4:"....-",5:".....",
+  6:"-....",7:"--...",8:"---..",9:"----.",
+  ".":".-.-.-",",":"--..--","?":"..--..","!":"-.-.--","/":"-..-.","-":"-....-","@":".--.-."
+};
+const MORSE_INV = Object.fromEntries(Object.entries(MORSE).map(([k, v]) => [v, k]));
+
+lib.paraMorse = s => lib.normalizar(s).toUpperCase().trim().split(/\s+/)
+  .map(p => [...p].map(c => MORSE[c] || "").filter(Boolean).join(" "))
+  .filter(Boolean).join(" / ");
+
+lib.deMorse = s => (s || "").trim().split("/")
+  .map(p => p.trim().split(/\s+/).map(c => MORSE_INV[c] || "").join(""))
+  .filter(Boolean).join(" ");
+
+// César: só desloca a-z e A-Z, preserva acentos, dígitos e pontuação.
+lib.cesar = (s, d) => {
+  const n = ((d % 26) + 26) % 26;
+  return (s || "").replace(/[a-z]/g, c =>
+      String.fromCharCode((c.charCodeAt(0) - 97 + n) % 26 + 97))
+    .replace(/[A-Z]/g, c =>
+      String.fromCharCode((c.charCodeAt(0) - 65 + n) % 26 + 65));
+};
+
 /* ---------- runner de testes ---------- */
 const TESTES = [];
 
@@ -520,6 +559,28 @@ TESTES.push({ nome: "inteiro sanitiza e satura o valor", fn: () => {
   assertEq(lib.inteiro("5.7", 1, 50, 1), 5, "fração trunca em direção a zero");
   assertEq(lib.inteiro(-5.7, -50, 50, 1), -5, "fração negativa trunca em direção a zero");
   assertEq(lib.inteiro(10, 1, 50, 1), 10, "valor válido passa inalterado");
+}});
+
+TESTES.push({ nome: "binário ida e volta", fn: () => {
+  assertEq(lib.paraBinario("A"), "01000001");
+  assertEq(lib.deBinario("01000001"), "A");
+  assertEq(lib.deBinario(lib.paraBinario("Olá, OmnIA!")), "Olá, OmnIA!");
+}});
+TESTES.push({ nome: "binário lida com entrada suja", fn: () => {
+  assertEq(lib.deBinario(" 01000001  01000010 "), "AB");
+}});
+TESTES.push({ nome: "morse ida e volta", fn: () => {
+  assertEq(lib.paraMorse("SOS"), "... --- ...");
+  assertEq(lib.paraMorse("oi mundo"), "--- .. / -- ..- -. -.. ---");
+  assertEq(lib.deMorse("... --- ..."), "SOS");
+  assertEq(lib.deMorse(lib.paraMorse("ola mundo 123")), "OLA MUNDO 123");
+}});
+TESTES.push({ nome: "césar preserva caixa e não-letras", fn: () => {
+  assertEq(lib.cesar("abc", 3), "def");
+  assertEq(lib.cesar("XYZ", 3), "ABC");
+  assertEq(lib.cesar("Olá, Mundo!", 0), "Olá, Mundo!");
+  assertEq(lib.cesar(lib.cesar("Hello", 13), 13), "Hello", "ROT13 é involutivo");
+  assertEq(lib.cesar("abc", -3), "xyz");
 }});
 
 /* ---------- render provisório do runner ---------- */
@@ -836,6 +897,60 @@ TOOLS.push({
       const r = lib.rolarDado(+f.value, lib.inteiro(q.value, 1, 50, 1));
       s.set(r.rolagens.join("  ·  ") + "\n\nTotal: " + r.total);
     }), s);
+  }
+});
+
+TOOLS.push({
+  id: "codigo-binario", cat: "cripto", tipo: "nativa",
+  nome: "Código Binário", desc: "Converte texto em binário e binário em texto",
+  tags: ["bits", "0", "1", "utf8", "decodificar"],
+  render(el) {
+    const a = ui.area("Texto ou binário");
+    const s = ui.saida();
+    ui.montar(el, a,
+      ui.linha(
+        ui.btn("Texto → Binário", () => s.set(lib.paraBinario(a.value))),
+        ui.btn("Binário → Texto", () => {
+          try { s.set(lib.deBinario(a.value)); }
+          catch (e) { s.set("Erro: " + e.message + ". Use apenas 0, 1 e espaços."); }
+        }, "secundaria")
+      ), s);
+  }
+});
+
+TOOLS.push({
+  id: "codigo-morse", cat: "cripto", tipo: "nativa",
+  nome: "Código Morse", desc: "Traduz texto para morse e de volta",
+  tags: ["sos", "ponto", "traco", "telegrafo"],
+  render(el) {
+    const a = ui.area("Texto ou morse");
+    const s = ui.saida();
+    ui.montar(el, a,
+      ui.linha(
+        ui.btn("Texto → Morse", () => s.set(lib.paraMorse(a.value))),
+        ui.btn("Morse → Texto", () => s.set(lib.deMorse(a.value)), "secundaria")
+      ), s);
+    const nota = document.createElement("p");
+    nota.style.cssText = "color:var(--texto-fraco);font-size:13px";
+    nota.textContent = "Letras separadas por espaço, palavras por barra ( / ). Acentos são removidos.";
+    el.appendChild(nota);
+  }
+});
+
+TOOLS.push({
+  id: "cifra-cesar", cat: "cripto", tipo: "nativa",
+  nome: "Cifra de César", desc: "Criptografa deslocando as letras do alfabeto",
+  tags: ["rot13", "criptografar", "deslocamento", "codificar"],
+  render(el) {
+    const a = ui.area("Texto");
+    const d = ui.campo("Deslocamento", "number", { value: 3, min: -25, max: 25 });
+    const s = ui.saida();
+    ui.montar(el, a, d,
+      ui.linha(
+        ui.btn("Cifrar", () => s.set(lib.cesar(a.value, lib.inteiro(d.value, -25, 25, 3)))),
+        ui.btn("Decifrar", () => s.set(lib.cesar(a.value, -lib.inteiro(d.value, -25, 25, 3))), "secundaria"),
+        ui.btn("ROT13", () => { d.value = 13; s.set(lib.cesar(a.value, 13)); }, "secundaria")
+      ), s);
   }
 });
 
