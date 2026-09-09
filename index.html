@@ -228,15 +228,36 @@ lib.sortear = (itens, n) => lib.embaralhar(itens).slice(0, Math.min(n, itens.len
 
 lib.gerarSenha = (op = {}) => {
   const tam = op.tamanho || 16;
-  let alfabeto = "";
-  if (op.maiusculas) alfabeto += "ABCDEFGHJKLMNPQRSTUVWXYZ";
-  if (op.minusculas) alfabeto += "abcdefghijkmnopqrstuvwxyz";
-  if (op.numeros)    alfabeto += "23456789";
-  if (op.simbolos)   alfabeto += "!@#$%&*-_=+?";
-  if (!alfabeto) return "";
-  const bytes = new Uint32Array(tam);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map(b => alfabeto[b % alfabeto.length]).join("");
+  const conjuntos = [];
+  if (op.maiusculas) conjuntos.push("ABCDEFGHJKLMNPQRSTUVWXYZ");
+  if (op.minusculas) conjuntos.push("abcdefghijkmnopqrstuvwxyz");
+  if (op.numeros)    conjuntos.push("23456789");
+  if (op.simbolos)   conjuntos.push("!@#$%&*-_=+?");
+  if (!conjuntos.length) return "";
+  const alfabeto = conjuntos.join("");
+
+  const sortear = max => {
+    const b = new Uint32Array(1);
+    crypto.getRandomValues(b);
+    return b[0] % max;
+  };
+
+  // Garante 1 caractere de cada conjunto selecionado. Se o tamanho pedido for menor
+  // que o número de conjuntos selecionados (ex.: tamanho 2 com 4 conjuntos), não há
+  // espaço para garantir todos — mantemos apenas os primeiros conjuntos, na ordem
+  // maiúsculas/minúsculas/números/símbolos, até preencher o tamanho.
+  const garantidos = conjuntos.slice(0, tam).map(c => c[sortear(c.length)]);
+  const resto = Array.from({ length: Math.max(0, tam - garantidos.length) },
+    () => alfabeto[sortear(alfabeto.length)]);
+  const chars = garantidos.concat(resto);
+
+  // Fisher-Yates com crypto.getRandomValues, para não deixar os caracteres
+  // garantidos sempre nas primeiras posições.
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = sortear(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
 };
 
 lib.megasena = () => {
@@ -248,6 +269,20 @@ lib.megasena = () => {
 lib.rolarDado = (faces, qtd) => {
   const rolagens = Array.from({ length: qtd }, () => 1 + Math.floor(Math.random() * faces));
   return { rolagens, total: rolagens.reduce((a, b) => a + b, 0) };
+};
+
+// Coerce qualquer entrada (string, number, vazio, null, undefined, NaN, "abc", "5.7",
+// negativo, absurdamente grande) para um inteiro dentro de [min, max]. Quando o valor
+// não pode ser lido como número (vazio, null, undefined, "abc", NaN), devolve `padrao`.
+// Quando é um número válido mas fica fora do intervalo, satura no limite mais próximo.
+// Valor fracionário é truncado em direção a zero (5.7 -> 5, -5.7 -> -5) — é o
+// comportamento esperado de "digitar um inteiro" num campo <input type="number">.
+lib.inteiro = (valor, min, max, padrao) => {
+  if (valor === null || valor === undefined || valor === "") return padrao;
+  const n = Number(valor);
+  if (Number.isNaN(n)) return padrao;
+  const truncado = Math.trunc(n);
+  return Math.min(max, Math.max(min, truncado));
 };
 
 /* ---------- runner de testes ---------- */
@@ -450,6 +485,16 @@ TESTES.push({ nome: "gerarSenha respeita tamanho e conjuntos", fn: () => {
   const so = lib.gerarSenha({ tamanho: 10, numeros: true });
   assertTrue(/^\d{10}$/.test(so), "só números: " + so);
 }});
+TESTES.push({ nome: "gerarSenha garante todos os conjuntos marcados", fn: () => {
+  for (let i = 0; i < 200; i++) {
+    const s = lib.gerarSenha({ tamanho: 4, maiusculas: true, minusculas: true, numeros: true, simbolos: true });
+    assertEq(s.length, 4);
+    assertTrue(/[A-Z]/.test(s), "faltou maiúscula: " + s);
+    assertTrue(/[a-z]/.test(s), "faltou minúscula: " + s);
+    assertTrue(/\d/.test(s), "faltou número: " + s);
+    assertTrue(/[!@#$%&*\-_=+?]/.test(s), "faltou símbolo: " + s);
+  }
+}});
 TESTES.push({ nome: "megasena: 6 dezenas únicas de 1 a 60 em ordem", fn: () => {
   for (let i = 0; i < 50; i++) {
     const j = lib.megasena();
@@ -464,6 +509,17 @@ TESTES.push({ nome: "rolarDado soma e limita as faces", fn: () => {
   assertEq(r.rolagens.length, 3);
   assertTrue(r.rolagens.every(n => n >= 1 && n <= 6));
   assertEq(r.total, r.rolagens.reduce((a,b)=>a+b,0));
+}});
+TESTES.push({ nome: "inteiro sanitiza e satura o valor", fn: () => {
+  assertEq(lib.inteiro(-5, 1, 50, 1), 1, "abaixo do mínimo satura no mínimo");
+  assertEq(lib.inteiro(999, 1, 50, 1), 50, "acima do máximo satura no máximo");
+  assertEq(lib.inteiro("abc", 1, 50, 1), 1, "string não numérica cai no padrão");
+  assertEq(lib.inteiro("", 1, 50, 1), 1, "string vazia cai no padrão");
+  assertEq(lib.inteiro(null, 1, 50, 1), 1, "null cai no padrão");
+  assertEq(lib.inteiro(undefined, 1, 50, 1), 1, "undefined cai no padrão");
+  assertEq(lib.inteiro("5.7", 1, 50, 1), 5, "fração trunca em direção a zero");
+  assertEq(lib.inteiro(-5.7, -50, 50, 1), -5, "fração negativa trunca em direção a zero");
+  assertEq(lib.inteiro(10, 1, 50, 1), 10, "valor válido passa inalterado");
 }});
 
 /* ---------- render provisório do runner ---------- */
@@ -720,7 +776,8 @@ TOOLS.push({
     ui.montar(el, a, n, ui.btn("Sortear", () => {
       const itens = a.value.split("\n").map(x => x.trim()).filter(Boolean);
       if (!itens.length) { s.set("Coloque pelo menos um nome."); return; }
-      s.set(lib.sortear(itens, +n.value || 1).map((x, i) => (i + 1) + "º — " + x).join("\n"));
+      const qtd = lib.inteiro(n.value, 1, Infinity, 1);
+      s.set(lib.sortear(itens, qtd).map((x, i) => (i + 1) + "º — " + x).join("\n"));
     }), s);
   }
 });
@@ -738,7 +795,7 @@ TOOLS.push({
     const s = ui.saida();
     const gerar = () => {
       const r = lib.gerarSenha({
-        tamanho: +t.value, maiusculas: ma.checked, minusculas: mi.checked,
+        tamanho: lib.inteiro(t.value, 4, 128, 16), maiusculas: ma.checked, minusculas: mi.checked,
         numeros: nu.checked, simbolos: si.checked
       });
       s.set(r || "Selecione ao menos um conjunto de caracteres.");
@@ -756,7 +813,7 @@ TOOLS.push({
     const q = ui.campo("Quantos jogos", "number", { value: 1, min: 1, max: 50 });
     const s = ui.saida();
     const gerar = () => {
-      s.set(Array.from({ length: +q.value || 1 }, (_, i) =>
+      s.set(Array.from({ length: lib.inteiro(q.value, 1, 50, 1) }, (_, i) =>
         "Jogo " + (i + 1) + ": " + lib.megasena().map(n => String(n).padStart(2, "0")).join(" - ")
       ).join("\n"));
     };
@@ -776,7 +833,7 @@ TOOLS.push({
     const q = ui.campo("Quantidade", "number", { value: 1, min: 1, max: 50 });
     const s = ui.saida();
     ui.montar(el, ui.linha(f, q), ui.btn("Rolar", () => {
-      const r = lib.rolarDado(+f.value, +q.value || 1);
+      const r = lib.rolarDado(+f.value, lib.inteiro(q.value, 1, 50, 1));
       s.set(r.rolagens.join("  ·  ") + "\n\nTotal: " + r.total);
     }), s);
   }
