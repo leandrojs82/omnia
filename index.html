@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="pt-BR" data-tema="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OmnIA — Canivete Suíço Digital</title>
+<style>
+/* tokens e layout entram na Task 1 */
+body { margin: 0; font-family: system-ui, sans-serif; }
+</style>
+</head>
+<body>
+<div id="app">OmnIA</div>
+<script>
+"use strict";
+const OmnIA = { lib: {} };
+const lib = OmnIA.lib;
+
+/* ---------- runner de testes ---------- */
+const TESTES = [];
+
+function assertEq(atual, esperado, msg) {
+  const a = JSON.stringify(atual), e = JSON.stringify(esperado);
+  if (a !== e) throw new Error((msg ? msg + ": " : "") + "esperado " + e + ", recebeu " + a);
+}
+
+function assertTrue(valor, msg) {
+  if (!valor) throw new Error(msg || "esperado valor verdadeiro, recebeu " + JSON.stringify(valor));
+}
+
+function rodarTestes() {
+  const falhas = [];
+  let passou = 0;
+  for (const t of TESTES) {
+    try { t.fn(); passou++; }
+    catch (e) { falhas.push({ nome: t.nome, erro: e.message }); }
+  }
+  return { passou, total: TESTES.length, falhas };
+}
+
+TESTES.push({ nome: "runner funciona", fn: () => assertEq(1 + 1, 2) });
+
+/* ---------- render provisório do runner ---------- */
+function renderTestes(el) {
+  const r = rodarTestes();
+  const linhas = r.falhas.map(f =>
+    '<li style="color:#f87171">✗ ' + f.nome + ' — ' + f.erro + '</li>'
+  ).join("");
+  el.innerHTML =
+    '<h1>Testes: ' + r.passou + '/' + r.total + '</h1>' +
+    (r.falhas.length ? '<ul>' + linhas + '</ul>' : '<p style="color:#4ade80">Todos passaram.</p>');
+}
+
+if (location.hash === "#/_testes") renderTestes(document.getElementById("app"));
+window.addEventListener("hashchange", () => location.reload());
+</script>
+</body>
+</html>
