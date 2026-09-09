@@ -200,6 +200,31 @@ TESTES.push({ nome: "estado aberta da categoria respeita recolhidas e ativa", fn
   assertEq(estadoAbertaCategoria("cat-z", 0, false), "nao", "sem ferramentas deve ficar fechada");
 }});
 
+TESTES.push({ nome: "store grava e lê JSON", fn: () => {
+  store.gravar("omnia.__t", { a: 1 });
+  assertEq(store.ler("omnia.__t", null), { a: 1 });
+  localStorage.removeItem("omnia.__t");
+}});
+TESTES.push({ nome: "store.ler devolve o padrão quando não existe", fn: () => {
+  assertEq(store.ler("omnia.__nada", "pad"), "pad");
+}});
+TESTES.push({ nome: "recentes limita a 6 e não duplica", fn: () => {
+  const bkp = store.ler("omnia.recentes", []);
+  store.gravar("omnia.recentes", []);
+  ["a","b","c","d","e","f","g"].forEach(store.registrarUso);
+  assertEq(store.recentes(), ["g","f","e","d","c","b"]);
+  store.registrarUso("d");
+  assertEq(store.recentes(), ["d","g","f","e","c","b"]);
+  store.gravar("omnia.recentes", bkp);
+}});
+TESTES.push({ nome: "alternarFavorito adiciona e remove", fn: () => {
+  const bkp = store.ler("omnia.favoritos", []);
+  store.gravar("omnia.favoritos", []);
+  assertEq(store.alternarFavorito("x"), ["x"]);
+  assertEq(store.alternarFavorito("x"), []);
+  store.gravar("omnia.favoritos", bkp);
+}});
+
 TESTES.push({ nome: "ui.campo devolve input com wrapper e label", fn: () => {
   const c = ui.campo("Peso", "number");
   assertEq(c.tagName, "INPUT");
@@ -269,6 +294,33 @@ const CATEGORIAS = [
   { id: "docs",      nome: "Documentos e Dados",    icone: "📄" },
   { id: "diversos",  nome: "Símbolos e Diversos",   icone: "✨" }
 ];
+
+/* ---------- persistência ---------- */
+const store = {
+  ler(chave, padrao) {
+    try {
+      const v = localStorage.getItem(chave);
+      return v === null ? padrao : JSON.parse(v);
+    } catch (e) { return padrao; }
+  },
+  gravar(chave, valor) {
+    try { localStorage.setItem(chave, JSON.stringify(valor)); } catch (e) {}
+  },
+  favoritos() { return store.ler("omnia.favoritos", []); },
+  alternarFavorito(id) {
+    const f = store.favoritos();
+    const i = f.indexOf(id);
+    if (i >= 0) f.splice(i, 1); else f.push(id);
+    store.gravar("omnia.favoritos", f);
+    return f;
+  },
+  recentes() { return store.ler("omnia.recentes", []); },
+  registrarUso(id) {
+    const r = store.recentes().filter(x => x !== id);
+    r.unshift(id);
+    store.gravar("omnia.recentes", r.slice(0, 6));
+  }
+};
 
 /* ---------- ui kit ---------- */
 const ui = {
@@ -375,7 +427,13 @@ function estadoAbertaCategoria(catId, qtdFerramentas, temAtiva) {
 
 function renderSidebar() {
   const ativa = (location.hash.match(/^#\/([\w-]+)/) || [])[1];
-  document.getElementById("lista-cats").innerHTML = CATEGORIAS.map(c => {
+  const favs = store.favoritos().map(getTool).filter(Boolean);
+  const blocoFav = favs.length
+    ? '<div class="cat" data-aberta="sim"><button>⭐ Favoritos</button><ul>' +
+      favs.map(t => '<li><a href="#/' + t.id + '">' + SELOS[t.tipo] + ' ' + t.nome + '</a></li>').join("") +
+      '</ul></div>'
+    : "";
+  document.getElementById("lista-cats").innerHTML = blocoFav + CATEGORIAS.map(c => {
     const ts = TOOLS.filter(t => t.cat === c.id);
     const itens = ts.length
       ? ts.map(t => '<li><a href="#/' + t.id + '"' +
@@ -415,6 +473,13 @@ function navegar() {
       '<p style="margin:0 0 20px;color:var(--texto-fraco)">' +
       SELOS[tool.tipo] + ' ' + cat.nome + ' — ' + tool.desc + '</p>';
     main.appendChild(cab);
+    store.registrarUso(tool.id);
+    const fav = ui.btn(
+      store.favoritos().includes(tool.id) ? "★ Favorita" : "☆ Favoritar",
+      e => { store.alternarFavorito(tool.id); navegar(); },
+      "secundaria"
+    );
+    cab.appendChild(fav);
     const caixa = document.createElement("div");
     main.appendChild(caixa);
     tool.render(caixa);
@@ -430,6 +495,15 @@ function navegar() {
 function renderHome(el) {
   el.innerHTML = '<h1>OmnIA</h1><p>Escolha uma ferramenta na barra lateral.</p>';
 }
+
+function aplicarTema(tema) {
+  document.documentElement.dataset.tema = tema;
+  document.getElementById("btn-tema").textContent = tema === "dark" ? "🌙" : "☀️";
+  store.gravar("omnia.tema", tema);
+}
+aplicarTema(store.ler("omnia.tema", "dark"));
+document.getElementById("btn-tema").onclick = () =>
+  aplicarTema(document.documentElement.dataset.tema === "dark" ? "light" : "dark");
 
 window.addEventListener("hashchange", navegar);
 document.getElementById("btn-menu").onclick = () => {
