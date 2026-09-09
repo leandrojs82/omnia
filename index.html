@@ -129,6 +129,25 @@ function rodarTestes() {
 
 TESTES.push({ nome: "runner funciona", fn: () => assertEq(1 + 1, 2) });
 
+TESTES.push({ nome: "toda ferramenta tem categoria válida", fn: () => {
+  const ids = CATEGORIAS.map(c => c.id);
+  for (const t of TOOLS) assertTrue(ids.includes(t.cat), t.id + " tem cat inválida: " + t.cat);
+}});
+TESTES.push({ nome: "ids de ferramenta são únicos", fn: () => {
+  const vistos = new Set();
+  for (const t of TOOLS) {
+    assertTrue(!vistos.has(t.id), "id duplicado: " + t.id);
+    vistos.add(t.id);
+  }
+}});
+TESTES.push({ nome: "tipo é nativa, online ou script", fn: () => {
+  for (const t of TOOLS) assertTrue(["nativa","online","script"].includes(t.tipo), t.id + " tipo inválido");
+}});
+TESTES.push({ nome: "getTool encontra e erra corretamente", fn: () => {
+  assertEq(getTool("__nao_existe__"), undefined);
+  if (TOOLS.length) assertEq(getTool(TOOLS[0].id).id, TOOLS[0].id);
+}});
+
 /* ---------- render provisório do runner ---------- */
 function renderTestes(el) {
   const r = rodarTestes();
@@ -140,8 +159,97 @@ function renderTestes(el) {
     (r.falhas.length ? '<ul>' + linhas + '</ul>' : '<p style="color:var(--ok)">Todos passaram.</p>');
 }
 
-if (location.hash === "#/_testes") renderTestes(document.getElementById("main"));
-window.addEventListener("hashchange", () => location.reload());
+/* ---------- categorias ---------- */
+const CATEGORIAS = [
+  { id: "texto",     nome: "Manipulação de Texto",  icone: "📝" },
+  { id: "analise",   nome: "Análise de Texto",      icone: "🔍" },
+  { id: "org",       nome: "Armazenamento",         icone: "🗂️" },
+  { id: "aleatorio", nome: "Aleatório",             icone: "🎲" },
+  { id: "cripto",    nome: "Criptografia",          icone: "🔐" },
+  { id: "data",      nome: "Data e Hora",           icone: "📅" },
+  { id: "mat",       nome: "Números e Matemática",  icone: "🔢" },
+  { id: "financas",  nome: "Finanças",              icone: "💰" },
+  { id: "dev",       nome: "Desenvolvedor",         icone: "👨‍💻" },
+  { id: "rede",      nome: "Internet e Redes",      icone: "🌐" },
+  { id: "midia",     nome: "Multimídia e Imagem",   icone: "🖼️" },
+  { id: "saude",     nome: "Saúde e Biologia",      icone: "❤️" },
+  { id: "docs",      nome: "Documentos e Dados",    icone: "📄" },
+  { id: "diversos",  nome: "Símbolos e Diversos",   icone: "✨" }
+];
+
+/* ---------- registry ---------- */
+const TOOLS = [];
+const getTool = id => TOOLS.find(t => t.id === id);
+
+/* ---------- sidebar ---------- */
+const SELOS = { nativa: "🟢", online: "🔵", script: "🟡" };
+
+function renderSidebar() {
+  const ativa = (location.hash.match(/^#\/([\w-]+)/) || [])[1];
+  document.getElementById("lista-cats").innerHTML = CATEGORIAS.map(c => {
+    const ts = TOOLS.filter(t => t.cat === c.id);
+    const itens = ts.length
+      ? ts.map(t => '<li><a href="#/' + t.id + '"' +
+          (t.id === ativa ? ' data-ativa="sim"' : '') + '>' +
+          SELOS[t.tipo] + ' ' + t.nome + '</a></li>').join("")
+      : '<li class="vazia">em breve</li>';
+    const aberta = ts.some(t => t.id === ativa) ? "sim" : (ts.length ? "sim" : "nao");
+    return '<div class="cat" data-aberta="' + aberta + '">' +
+      '<button>' + c.icone + ' ' + c.nome + '<span>' + (ts.length || "") + '</span></button>' +
+      '<ul>' + itens + '</ul></div>';
+  }).join("");
+
+  document.querySelectorAll(".cat > button").forEach(b => {
+    b.onclick = () => {
+      const cat = b.parentElement;
+      cat.dataset.aberta = cat.dataset.aberta === "sim" ? "nao" : "sim";
+    };
+  });
+}
+
+/* ---------- router ---------- */
+function navegar() {
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+  const id = (location.hash.match(/^#\/([\w-]+)/) || [])[1];
+
+  if (id === "_testes") { renderTestes(main); return; }
+
+  const tool = id && getTool(id);
+  if (tool) {
+    const cat = CATEGORIAS.find(c => c.id === tool.cat);
+    const cab = document.createElement("div");
+    cab.innerHTML = '<h1 style="margin:0 0 4px;font-size:24px">' + tool.nome + '</h1>' +
+      '<p style="margin:0 0 20px;color:var(--texto-fraco)">' +
+      SELOS[tool.tipo] + ' ' + cat.nome + ' — ' + tool.desc + '</p>';
+    main.appendChild(cab);
+    const caixa = document.createElement("div");
+    main.appendChild(caixa);
+    tool.render(caixa);
+  } else {
+    renderHome(main);
+  }
+  renderSidebar();
+  document.getElementById("sidebar").dataset.aberta = "nao";
+  document.getElementById("overlay").dataset.aberta = "nao";
+  window.scrollTo(0, 0);
+}
+
+function renderHome(el) {
+  el.innerHTML = '<h1>OmnIA</h1><p>Escolha uma ferramenta na barra lateral.</p>';
+}
+
+window.addEventListener("hashchange", navegar);
+document.getElementById("btn-menu").onclick = () => {
+  const s = document.getElementById("sidebar"), o = document.getElementById("overlay");
+  const novo = s.dataset.aberta === "sim" ? "nao" : "sim";
+  s.dataset.aberta = novo; o.dataset.aberta = novo;
+};
+document.getElementById("overlay").onclick = () => {
+  document.getElementById("sidebar").dataset.aberta = "nao";
+  document.getElementById("overlay").dataset.aberta = "nao";
+};
+navegar();
 </script>
 </body>
 </html>
