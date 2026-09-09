@@ -201,28 +201,37 @@ TESTES.push({ nome: "estado aberta da categoria respeita recolhidas e ativa", fn
 }});
 
 TESTES.push({ nome: "store grava e lê JSON", fn: () => {
-  store.gravar("omnia.__t", { a: 1 });
-  assertEq(store.ler("omnia.__t", null), { a: 1 });
-  localStorage.removeItem("omnia.__t");
+  try {
+    store.gravar("omnia.__t", { a: 1 });
+    assertEq(store.ler("omnia.__t", null), { a: 1 });
+  } finally {
+    localStorage.removeItem("omnia.__t");
+  }
 }});
 TESTES.push({ nome: "store.ler devolve o padrão quando não existe", fn: () => {
   assertEq(store.ler("omnia.__nada", "pad"), "pad");
 }});
 TESTES.push({ nome: "recentes limita a 6 e não duplica", fn: () => {
   const bkp = store.ler("omnia.recentes", []);
-  store.gravar("omnia.recentes", []);
-  ["a","b","c","d","e","f","g"].forEach(store.registrarUso);
-  assertEq(store.recentes(), ["g","f","e","d","c","b"]);
-  store.registrarUso("d");
-  assertEq(store.recentes(), ["d","g","f","e","c","b"]);
-  store.gravar("omnia.recentes", bkp);
+  try {
+    store.gravar("omnia.recentes", []);
+    ["a","b","c","d","e","f","g"].forEach(store.registrarUso);
+    assertEq(store.recentes(), ["g","f","e","d","c","b"]);
+    store.registrarUso("d");
+    assertEq(store.recentes(), ["d","g","f","e","c","b"]);
+  } finally {
+    store.gravar("omnia.recentes", bkp);
+  }
 }});
 TESTES.push({ nome: "alternarFavorito adiciona e remove", fn: () => {
   const bkp = store.ler("omnia.favoritos", []);
-  store.gravar("omnia.favoritos", []);
-  assertEq(store.alternarFavorito("x"), ["x"]);
-  assertEq(store.alternarFavorito("x"), []);
-  store.gravar("omnia.favoritos", bkp);
+  try {
+    store.gravar("omnia.favoritos", []);
+    assertEq(store.alternarFavorito("x"), ["x"]);
+    assertEq(store.alternarFavorito("x"), []);
+  } finally {
+    store.gravar("omnia.favoritos", bkp);
+  }
 }});
 
 TESTES.push({ nome: "ui.campo devolve input com wrapper e label", fn: () => {
