@@ -545,6 +545,18 @@ lib.lorem = (paragrafos, palavrasPorParagrafo = 45) => {
   return paras.join("\n\n");
 };
 
+lib.imc = (peso, altura) => {
+  if (!(peso > 0) || !(altura > 0)) throw new Error("Informe peso e altura maiores que zero.");
+  const v = Math.round((peso / (altura * altura)) * 100) / 100;
+  const classificacao =
+    v < 18.5 ? "Abaixo do peso" :
+    v < 25   ? "Peso normal" :
+    v < 30   ? "Sobrepeso" :
+    v < 35   ? "Obesidade grau I" :
+    v < 40   ? "Obesidade grau II" : "Obesidade grau III";
+  return { valor: v, classificacao };
+};
+
 /* ---------- runner de testes ---------- */
 const TESTES = [];
 
@@ -986,6 +998,21 @@ TESTES.push({ nome: "lorem gera a quantidade pedida", fn: () => {
   const t = lib.lorem(3);
   assertEq(t.split("\n\n").length, 3);
   assertTrue(t.startsWith("Lorem ipsum"));
+}});
+TESTES.push({ nome: "imc calcula e classifica", fn: () => {
+  const r = lib.imc(70, 1.75);
+  assertEq(r.valor, 22.86);
+  assertEq(r.classificacao, "Peso normal");
+  assertEq(lib.imc(45, 1.75).classificacao, "Abaixo do peso");
+  assertEq(lib.imc(80, 1.75).classificacao, "Sobrepeso");
+  assertEq(lib.imc(95, 1.75).classificacao, "Obesidade grau I");
+  assertEq(lib.imc(110, 1.75).classificacao, "Obesidade grau II");
+  assertEq(lib.imc(130, 1.75).classificacao, "Obesidade grau III");
+}});
+TESTES.push({ nome: "imc rejeita entrada inválida", fn: () => {
+  let erro = false;
+  try { lib.imc(70, 0); } catch (e) { erro = true; }
+  assertTrue(erro, "altura zero deve lançar");
 }});
 
 /* ---------- render provisório do runner ---------- */
@@ -1588,6 +1615,31 @@ TOOLS.push({
     const gerar = () => s.set(lib.lorem(lib.inteiro(p.value, 1, 50, 3), lib.inteiro(w.value, 10, 300, 45)));
     ui.montar(el, ui.linha(p, w), ui.btn("Gerar", gerar), s);
     gerar();
+  }
+});
+
+TOOLS.push({
+  id: "imc", cat: "saude", tipo: "nativa",
+  nome: "Calculadora de IMC", desc: "Índice de Massa Corporal e faixa de peso ideal",
+  tags: ["peso", "altura", "obesidade", "massa corporal"],
+  render(el) {
+    const p = ui.campo("Peso (kg)", "number", { step: "any", placeholder: "70" });
+    const a = ui.campo("Altura (m)", "number", { step: "any", placeholder: "1.75" });
+    const s = ui.saida();
+    ui.montar(el, ui.linha(p, a), ui.btn("Calcular", () => {
+      try {
+        const r = lib.imc(+p.value, +a.value);
+        const alt = +a.value;
+        const min = (18.5 * alt * alt).toFixed(1), max = (24.9 * alt * alt).toFixed(1);
+        s.set("IMC: " + r.valor.toLocaleString("pt-BR") + "\n" +
+          "Classificação: " + r.classificacao + "\n\n" +
+          "Faixa de peso normal para " + alt + " m: de " + min + " kg a " + max + " kg");
+      } catch (e) { s.set("Erro: " + e.message); }
+    }), s);
+    const aviso = document.createElement("p");
+    aviso.style.cssText = "color:var(--texto-fraco);font-size:13px;margin-top:18px";
+    aviso.textContent = "O IMC é um indicador populacional e não considera composição corporal, idade ou sexo. Não substitui avaliação profissional.";
+    el.appendChild(aviso);
   }
 });
 
