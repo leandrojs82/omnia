@@ -545,16 +545,43 @@ lib.lorem = (paragrafos, palavrasPorParagrafo = 45) => {
   return paras.join("\n\n");
 };
 
+// Fonte única dos limiares de classificação do IMC (padrão OMS). O limite de
+// cada faixa é exclusivo (o valor do limite já pertence à faixa seguinte).
+// lib.imc e lib.imcFaixaPeso leem os dois primeiros limiares daqui, então não
+// podem divergir entre si.
+const IMC_FAIXAS = [
+  { limite: 18.5, nome: "Abaixo do peso" },
+  { limite: 25,   nome: "Peso normal" },
+  { limite: 30,   nome: "Sobrepeso" },
+  { limite: 35,   nome: "Obesidade grau I" },
+  { limite: 40,   nome: "Obesidade grau II" },
+];
+const IMC_FAIXA_MAXIMA = "Obesidade grau III";
+
+function imcClassificar(v) {
+  for (const f of IMC_FAIXAS) if (v < f.limite) return f.nome;
+  return IMC_FAIXA_MAXIMA;
+}
+
 lib.imc = (peso, altura) => {
   if (!(peso > 0) || !(altura > 0)) throw new Error("Informe peso e altura maiores que zero.");
   const v = Math.round((peso / (altura * altura)) * 100) / 100;
-  const classificacao =
-    v < 18.5 ? "Abaixo do peso" :
-    v < 25   ? "Peso normal" :
-    v < 30   ? "Sobrepeso" :
-    v < 35   ? "Obesidade grau I" :
-    v < 40   ? "Obesidade grau II" : "Obesidade grau III";
-  return { valor: v, classificacao };
+  return { valor: v, classificacao: imcClassificar(v) };
+};
+
+// Faixa de peso saudável (classificação "Peso normal") para uma altura dada,
+// derivada dos mesmos IMC_FAIXAS usados por lib.imc — não pode divergir da
+// classificação. O limite superior é exclusivo (peso == max já é
+// "Sobrepeso"), então é arredondado para baixo estritamente; o limite
+// inferior é inclusivo, então é arredondado para cima.
+lib.imcFaixaPeso = (altura) => {
+  if (!(altura > 0)) throw new Error("Informe uma altura maior que zero.");
+  const area = altura * altura;
+  const limiteInferior = IMC_FAIXAS[0].limite; // 18.5 — inclusivo
+  const limiteSuperior = IMC_FAIXAS[1].limite; // 25   — exclusivo
+  const min = Math.ceil(limiteInferior * area * 10) / 10;
+  const max = Math.floor(limiteSuperior * area * 10 - 1e-6) / 10;
+  return { min, max };
 };
 
 /* ---------- runner de testes ---------- */
@@ -1013,6 +1040,37 @@ TESTES.push({ nome: "imc rejeita entrada inválida", fn: () => {
   let erro = false;
   try { lib.imc(70, 0); } catch (e) { erro = true; }
   assertTrue(erro, "altura zero deve lançar");
+}});
+TESTES.push({ nome: "imc classifica exatamente nos limiares", fn: () => {
+  // altura = 1 m => valor do IMC == peso informado, então dá pra testar os limiares exatos.
+  assertEq(lib.imc(18.5, 1).classificacao, "Peso normal");
+  assertEq(lib.imc(25, 1).classificacao, "Sobrepeso");
+  assertEq(lib.imc(30, 1).classificacao, "Obesidade grau I");
+  assertEq(lib.imc(35, 1).classificacao, "Obesidade grau II");
+  assertEq(lib.imc(40, 1).classificacao, "Obesidade grau III");
+}});
+TESTES.push({ nome: "imcFaixaPeso calcula a faixa de peso saudável", fn: () => {
+  // 1.75 m: mínimo = 18.5 × 1.75² = 18.5 × 3.0625 = 56.65625 -> arredondado para cima (56.7)
+  //         máximo, exclusivo: 25 × 3.0625 = 76.5625 -> arredondado para baixo (76.5)
+  const r = lib.imcFaixaPeso(1.75);
+  assertEq(r.min, 56.7);
+  assertEq(r.max, 76.5);
+}});
+TESTES.push({ nome: "imcFaixaPeso rejeita altura inválida", fn: () => {
+  let erro = false;
+  try { lib.imcFaixaPeso(0); } catch (e) { erro = true; }
+  assertTrue(erro, "altura zero deve lançar");
+}});
+TESTES.push({ nome: "imcFaixaPeso e imc concordam nos limites da faixa", fn: () => {
+  [1.50, 1.60, 1.75, 1.80, 2.00].forEach(altura => {
+    const r = lib.imcFaixaPeso(altura);
+    assertEq(lib.imc(r.min, altura).classificacao, "Peso normal",
+      "peso no mínimo da faixa (" + altura + "m)");
+    assertEq(lib.imc(r.max, altura).classificacao, "Peso normal",
+      "peso no máximo da faixa (" + altura + "m)");
+    assertEq(lib.imc(Math.round((r.max + 0.1) * 10) / 10, altura).classificacao, "Sobrepeso",
+      "peso logo acima do máximo da faixa (" + altura + "m)");
+  });
 }});
 
 /* ---------- render provisório do runner ---------- */
@@ -1630,10 +1688,10 @@ TOOLS.push({
       try {
         const r = lib.imc(+p.value, +a.value);
         const alt = +a.value;
-        const min = (18.5 * alt * alt).toFixed(1), max = (24.9 * alt * alt).toFixed(1);
+        const faixa = lib.imcFaixaPeso(alt);
         s.set("IMC: " + r.valor.toLocaleString("pt-BR") + "\n" +
           "Classificação: " + r.classificacao + "\n\n" +
-          "Faixa de peso normal para " + alt + " m: de " + min + " kg a " + max + " kg");
+          "Faixa de peso normal para " + alt + " m: de " + faixa.min + " kg até " + faixa.max + " kg");
       } catch (e) { s.set("Erro: " + e.message); }
     }), s);
     const aviso = document.createElement("p");
