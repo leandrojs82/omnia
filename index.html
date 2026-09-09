@@ -396,6 +396,57 @@ lib.diasUteis = (aIso, bIso, feriados = []) => {
   return n;
 };
 
+lib.regraDeTres = (a, b, c) => {
+  if (!a) throw new Error("O primeiro valor não pode ser zero.");
+  return (b * c) / a;
+};
+
+lib.porcentagem = (modo, x, y) => {
+  if (modo === "de") return (x / 100) * y;
+  if (modo === "quantoE") {
+    if (!y) throw new Error("O total não pode ser zero.");
+    return (x / y) * 100;
+  }
+  if (modo === "variacao") {
+    if (!x) throw new Error("O valor inicial não pode ser zero.");
+    return ((y - x) / x) * 100;
+  }
+  throw new Error("Modo inválido");
+};
+
+const ROMANOS = [
+  [1000, "M"], [900, "CM"], [500, "D"], [400, "CD"], [100, "C"], [90, "XC"],
+  [50, "L"], [40, "XL"], [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]
+];
+
+lib.paraRomano = n => {
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > 3999) {
+    throw new Error("Use um número inteiro de 1 a 3999.");
+  }
+  let r = "";
+  for (const [v, s] of ROMANOS) while (n >= v) { r += s; n -= v; }
+  return r;
+};
+
+lib.deRomano = s => {
+  s = (s || "").toUpperCase().trim();
+  if (!/^[MDCLXVI]+$/.test(s)) throw new Error("Use apenas M D C L X V I.");
+  const val = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 };
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const a = val[s[i]], b = val[s[i + 1]] || 0;
+    n += a < b ? -a : a;
+  }
+  if (lib.paraRomano(n) !== s) throw new Error("Numeral romano mal formado.");
+  return n;
+};
+
+lib.converterBase = (valor, de, para) => {
+  const n = parseInt((valor || "").trim(), de);
+  if (isNaN(n)) throw new Error("Valor inválido para a base " + de + ".");
+  return n.toString(para).toUpperCase();
+};
+
 /* ---------- runner de testes ---------- */
 const TESTES = [];
 
@@ -751,6 +802,36 @@ TESTES.push({ nome: "diasUteis conta seg-sex e exclui feriados", fn: () => {
 TESTES.push({ nome: "diasUteis aceita intervalo invertido e não desconta feriado em fim de semana duas vezes", fn: () => {
   assertEq(lib.diasUteis("2026-01-09", "2026-01-05"), 5, "intervalo invertido dá o mesmo resultado");
   assertEq(lib.diasUteis("2026-01-05", "2026-01-11", ["2026-01-10"]), 5, "feriado em sábado não é subtraído de novo");
+}});
+TESTES.push({ nome: "regraDeTres", fn: () => {
+  assertEq(lib.regraDeTres(2, 10, 6), 30);
+  assertEq(lib.regraDeTres(4, 1, 2), 0.5);
+}});
+TESTES.push({ nome: "porcentagem nos 3 modos", fn: () => {
+  assertEq(lib.porcentagem("de", 20, 50), 10);
+  assertEq(lib.porcentagem("quantoE", 10, 50), 20);
+  assertEq(lib.porcentagem("variacao", 50, 75), 50);
+  assertEq(lib.porcentagem("variacao", 100, 80), -20);
+}});
+TESTES.push({ nome: "romanos ida e volta", fn: () => {
+  assertEq(lib.paraRomano(1), "I");
+  assertEq(lib.paraRomano(4), "IV");
+  assertEq(lib.paraRomano(1994), "MCMXCIV");
+  assertEq(lib.paraRomano(3999), "MMMCMXCIX");
+  assertEq(lib.deRomano("MCMXCIV"), 1994);
+  assertEq(lib.deRomano("mmxxvi"), 2026, "aceita minúsculas");
+  for (const n of [7, 40, 90, 400, 900, 2026]) assertEq(lib.deRomano(lib.paraRomano(n)), n);
+}});
+TESTES.push({ nome: "romanos rejeitam fora de faixa", fn: () => {
+  let erro = false;
+  try { lib.paraRomano(0); } catch (e) { erro = true; }
+  assertTrue(erro, "0 deve lançar");
+}});
+TESTES.push({ nome: "converterBase", fn: () => {
+  assertEq(lib.converterBase("255", 10, 16), "FF");
+  assertEq(lib.converterBase("FF", 16, 2), "11111111");
+  assertEq(lib.converterBase("1010", 2, 10), "10");
+  assertEq(lib.converterBase("777", 8, 10), "511");
 }});
 
 /* ---------- render provisório do runner ---------- */
@@ -1179,6 +1260,95 @@ TOOLS.push({
         const corridos = lib.diasEntre(a.value, b.value) + 1;
         s.set(uteis + " dias úteis\n" + corridos + " dias corridos\n" +
           (corridos - uteis) + " dias não úteis (fins de semana e feriados informados)");
+      } catch (e) { s.set("Erro: " + e.message); }
+    }), s);
+  }
+});
+
+TOOLS.push({
+  id: "regra-de-tres", cat: "mat", tipo: "nativa",
+  nome: "Regra de 3 Simples", desc: "Calcula o quarto valor proporcional, com passo a passo",
+  tags: ["proporcao", "cross", "tres"],
+  render(el) {
+    const a = ui.campo("Se", "number", { step: "any", placeholder: "2" });
+    const b = ui.campo("está para", "number", { step: "any", placeholder: "10" });
+    const c = ui.campo("assim como", "number", { step: "any", placeholder: "6" });
+    const s = ui.saida();
+    ui.montar(el, ui.linha(a, b, c), ui.btn("Calcular X", () => {
+      if (a.value.trim() === "" || b.value.trim() === "" || c.value.trim() === "") {
+        s.set("Erro: preencha os três valores.");
+        return;
+      }
+      try {
+        const x = lib.regraDeTres(+a.value, +b.value, +c.value);
+        s.set(a.value + " —— " + b.value + "\n" + c.value + " —— X\n\n" +
+          "X = (" + b.value + " × " + c.value + ") ÷ " + a.value + "\n" +
+          "X = " + x.toLocaleString("pt-BR", { maximumFractionDigits: 6 }));
+      } catch (e) { s.set("Erro: " + e.message); }
+    }), s);
+  }
+});
+
+TOOLS.push({
+  id: "porcentagem", cat: "mat", tipo: "nativa",
+  nome: "Calculadora de Porcentagem", desc: "Percentual de um valor, proporção e variação",
+  tags: ["percentual", "desconto", "aumento", "%"],
+  render(el) {
+    const m = ui.select("O que calcular", [
+      { v: "de", t: "Quanto é X% de Y" },
+      { v: "quantoE", t: "X é quantos % de Y" },
+      { v: "variacao", t: "Variação de X para Y" }
+    ]);
+    const x = ui.campo("X", "number", { step: "any" });
+    const y = ui.campo("Y", "number", { step: "any" });
+    const s = ui.saida();
+    ui.montar(el, m, ui.linha(x, y), ui.btn("Calcular", () => {
+      if (x.value.trim() === "" || y.value.trim() === "") {
+        s.set("Erro: preencha os dois valores.");
+        return;
+      }
+      try {
+        const r = lib.porcentagem(m.value, +x.value, +y.value);
+        const fmt = r.toLocaleString("pt-BR", { maximumFractionDigits: 4 });
+        s.set(m.value === "de" ? fmt
+          : m.value === "quantoE" ? fmt + "%"
+          : (r >= 0 ? "Aumento de " : "Queda de ") + Math.abs(r).toLocaleString("pt-BR", { maximumFractionDigits: 4 }) + "%");
+      } catch (e) { s.set("Erro: " + e.message); }
+    }), s);
+  }
+});
+
+TOOLS.push({
+  id: "numeros-romanos", cat: "mat", tipo: "nativa",
+  nome: "Números Romanos", desc: "Converte de e para algarismos romanos (1 a 3999)",
+  tags: ["algarismo", "latim", "mcmxciv"],
+  render(el) {
+    const a = ui.campo("Número ou romano", "text", { placeholder: "1994 ou MCMXCIV" });
+    const s = ui.saida();
+    ui.montar(el, a, ui.btn("Converter", () => {
+      const v = a.value.trim();
+      if (v === "") { s.set("Erro: digite um número ou um numeral romano."); return; }
+      try { s.set(/^\d+$/.test(v) ? lib.paraRomano(+v) : String(lib.deRomano(v))); }
+      catch (e) { s.set("Erro: " + e.message); }
+    }), s);
+  }
+});
+
+TOOLS.push({
+  id: "conversor-base", cat: "mat", tipo: "nativa",
+  nome: "Conversor de Base Numérica", desc: "Binário, octal, decimal e hexadecimal",
+  tags: ["binario", "hexadecimal", "octal", "base"],
+  render(el) {
+    const bases = [{ v: 2, t: "Binário (2)" }, { v: 8, t: "Octal (8)" },
+                   { v: 10, t: "Decimal (10)" }, { v: 16, t: "Hexadecimal (16)" }];
+    const v = ui.campo("Valor");
+    const de = ui.select("De", bases); de.value = "10";
+    const s = ui.saida();
+    ui.montar(el, ui.linha(v, de), ui.btn("Converter", () => {
+      if (v.value.trim() === "") { s.set("Erro: digite um valor."); return; }
+      try {
+        s.set(bases.map(b =>
+          b.t.padEnd(20) + lib.converterBase(v.value, +de.value, +b.v)).join("\n"));
       } catch (e) { s.set("Erro: " + e.message); }
     }), s);
   }
