@@ -437,13 +437,18 @@ lib.deRomano = s => {
     const a = val[s[i]], b = val[s[i + 1]] || 0;
     n += a < b ? -a : a;
   }
-  if (lib.paraRomano(n) !== s) throw new Error("Numeral romano mal formado.");
+  if (n < 1 || n > 3999 || lib.paraRomano(n) !== s) throw new Error("Numeral romano mal formado.");
   return n;
 };
 
+const DIGITOS_BASE = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
 lib.converterBase = (valor, de, para) => {
-  const n = parseInt((valor || "").trim(), de);
-  if (isNaN(n)) throw new Error("Valor inválido para a base " + de + ".");
+  const v = (valor || "").trim().toUpperCase();
+  const alfabeto = DIGITOS_BASE.slice(0, de);
+  const regex = new RegExp("^[" + alfabeto + "]+$");
+  if (!v || !regex.test(v)) throw new Error("Valor inválido para a base " + de + ".");
+  const n = parseInt(v, de);
   return n.toString(para).toUpperCase();
 };
 
@@ -832,6 +837,23 @@ TESTES.push({ nome: "converterBase", fn: () => {
   assertEq(lib.converterBase("FF", 16, 2), "11111111");
   assertEq(lib.converterBase("1010", 2, 10), "10");
   assertEq(lib.converterBase("777", 8, 10), "511");
+}});
+TESTES.push({ nome: "converterBase rejeita dígito inválido em qualquer posição", fn: () => {
+  assertThrows(() => lib.converterBase("12", 2, 10), "12 não é binário válido");
+  assertThrows(() => lib.converterBase("109", 8, 10), "109 não é octal válido");
+  assertThrows(() => lib.converterBase("1G", 16, 10), "1G não é hexadecimal válido");
+}});
+TESTES.push({ nome: "converterBase aceita entrada válida", fn: () => {
+  assertEq(lib.converterBase("ff", 16, 10), "255", "hex minúsculo");
+  assertEq(lib.converterBase("  255  ", 10, 16), "FF", "espaços ao redor");
+}});
+TESTES.push({ nome: "converterBase rejeita sinal negativo", fn: () => {
+  assertThrows(() => lib.converterBase("-10", 2, 10), "sinal negativo não é suportado");
+}});
+TESTES.push({ nome: "deRomano numeral mal formado reporta mensagem correta", fn: () => {
+  let msg = "";
+  try { lib.deRomano("MMMM"); } catch (e) { msg = e.message; }
+  assertEq(msg, "Numeral romano mal formado.");
 }});
 
 /* ---------- render provisório do runner ---------- */
