@@ -113,6 +113,16 @@ header {
 }
 #toast[data-ver="sim"] { opacity: 1; }
 
+.grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.grade-cats { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.card, .card-cat {
+  display: block; padding: 12px 14px; text-decoration: none; color: var(--texto);
+  background: var(--surface); border: 1px solid var(--borda); border-radius: var(--r);
+}
+.card:hover, .card-cat:hover { border-color: var(--acento); }
+.card span, .card-cat span { display: block; margin-top: 3px; font-size: 12px; color: var(--texto-fraco); }
+.card-cat .ic { font-size: 20px; }
+
 #overlay { display: none; }
 @media (max-width: 767px) {
   #btn-menu { display: block; }
@@ -146,6 +156,18 @@ header {
 "use strict";
 const OmnIA = { lib: {} };
 const lib = OmnIA.lib;
+
+/* ---------- lib ---------- */
+lib.normalizar = s => (s == null ? "" : String(s)).toLowerCase()
+  .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+lib.buscar = (termo, tools) => {
+  const q = lib.normalizar(termo).trim();
+  if (!q) return tools.slice();
+  return tools.filter(t =>
+    lib.normalizar(t.nome + " " + t.desc + " " + (t.tags || []).join(" ")).includes(q)
+  );
+};
 
 /* ---------- runner de testes ---------- */
 const TESTES = [];
@@ -273,6 +295,25 @@ TESTES.push({ nome: "ui.saida alterna data-tem ao definir e limpar o texto", fn:
   assertEq(s.dataset.tem, "sim", "deve aparecer com conteúdo");
   s.set("");
   assertEq(s.dataset.tem, "nao", "deve ocultar quando vazio");
+}});
+
+TESTES.push({ nome: "normalizar remove acento e caixa", fn: () => {
+  assertEq(lib.normalizar("Ação ÉPICA"), "acao epica");
+}});
+TESTES.push({ nome: "buscar acha por nome sem acento", fn: () => {
+  const t = [{ id: "a", nome: "Números Romanos", desc: "", tags: [] }];
+  assertEq(lib.buscar("numeros", t).length, 1);
+  assertEq(lib.buscar("ROMAN", t).length, 1);
+}});
+TESTES.push({ nome: "buscar acha por tag e por desc", fn: () => {
+  const t = [{ id: "a", nome: "Senha", desc: "gera chaves", tags: ["password"] }];
+  assertEq(lib.buscar("password", t).length, 1);
+  assertEq(lib.buscar("chaves", t).length, 1);
+  assertEq(lib.buscar("xyz", t).length, 0);
+}});
+TESTES.push({ nome: "buscar com termo vazio devolve tudo", fn: () => {
+  const t = [{ id: "a", nome: "A", desc: "", tags: [] }, { id: "b", nome: "B", desc: "", tags: [] }];
+  assertEq(lib.buscar("  ", t).length, 2);
 }});
 
 /* ---------- render provisório do runner ---------- */
@@ -468,6 +509,7 @@ function renderSidebar() {
 
 /* ---------- router ---------- */
 function navegar() {
+  document.getElementById("busca").value = "";
   const main = document.getElementById("main");
   main.innerHTML = "";
   const id = (location.hash.match(/^#\/([\w-]+)/) || [])[1];
@@ -502,8 +544,48 @@ function navegar() {
 }
 
 function renderHome(el) {
-  el.innerHTML = '<h1>OmnIA</h1><p>Escolha uma ferramenta na barra lateral.</p>';
+  const recentes = store.recentes().map(getTool).filter(Boolean);
+  const cards = CATEGORIAS.map(c => {
+    const n = TOOLS.filter(t => t.cat === c.id).length;
+    return '<div class="card-cat"><div class="ic">' + c.icone + '</div>' +
+      '<strong>' + c.nome + '</strong>' +
+      '<span>' + (n ? n + (n > 1 ? " ferramentas" : " ferramenta") : "em breve") + '</span></div>';
+  }).join("");
+  el.innerHTML =
+    '<h1 style="margin:0 0 6px">Omn<span style="color:var(--acento)">IA</span></h1>' +
+    '<p style="color:var(--texto-fraco);margin:0 0 24px">' +
+    TOOLS.length + ' ferramentas prontas para usar. Tudo roda no seu navegador.</p>' +
+    (recentes.length
+      ? '<h2 style="font-size:15px;color:var(--texto-fraco)">Usadas recentemente</h2><div class="grade">' +
+        recentes.map(t => '<a class="card" href="#/' + t.id + '">' + SELOS[t.tipo] + ' ' + t.nome + '</a>').join("") +
+        '</div>'
+      : '') +
+    '<h2 style="font-size:15px;color:var(--texto-fraco);margin-top:26px">Categorias</h2>' +
+    '<div class="grade-cats">' + cards + '</div>';
 }
+
+/* ---------- busca ---------- */
+const inputBusca = document.getElementById("busca");
+inputBusca.addEventListener("input", () => {
+  const q = inputBusca.value;
+  if (!q.trim()) { navegar(); return; }
+  const achados = lib.buscar(q, TOOLS);
+  document.getElementById("main").innerHTML =
+    '<h1 style="font-size:20px">Busca: "' + q.replace(/</g, "&lt;") + '"</h1>' +
+    (achados.length
+      ? '<div class="grade">' + achados.map(t =>
+          '<a class="card" href="#/' + t.id + '">' + SELOS[t.tipo] + ' ' + t.nome +
+          '<span>' + t.desc + '</span></a>').join("") + '</div>'
+      : '<p>Nenhuma ferramenta encontrada.</p>');
+});
+inputBusca.addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  const achados = lib.buscar(inputBusca.value, TOOLS);
+  if (achados.length) { inputBusca.value = ""; location.hash = "#/" + achados[0].id; }
+});
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "k") { e.preventDefault(); inputBusca.focus(); }
+});
 
 function aplicarTema(tema) {
   document.documentElement.dataset.tema = tema;
