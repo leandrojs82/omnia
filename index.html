@@ -204,6 +204,52 @@ lib.substituir = (s, busca, troca, op = {}) => {
   return (s || "").replace(new RegExp(padrao, flags), troca);
 };
 
+lib.contarTexto = s => {
+  s = s || "";
+  return {
+    caracteres: s.length,
+    semEspacos: s.replace(/\s/g, "").length,
+    palavras: s.trim() ? s.trim().split(/\s+/).length : 0,
+    linhas: s === "" ? 0 : s.split("\n").length,
+    paragrafos: s.trim() ? s.trim().split(/\n\s*\n/).length : 0
+  };
+};
+
+lib.embaralhar = itens => {
+  const a = itens.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+
+lib.sortear = (itens, n) => lib.embaralhar(itens).slice(0, Math.min(n, itens.length));
+
+lib.gerarSenha = (op = {}) => {
+  const tam = op.tamanho || 16;
+  let alfabeto = "";
+  if (op.maiusculas) alfabeto += "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  if (op.minusculas) alfabeto += "abcdefghijkmnopqrstuvwxyz";
+  if (op.numeros)    alfabeto += "23456789";
+  if (op.simbolos)   alfabeto += "!@#$%&*-_=+?";
+  if (!alfabeto) return "";
+  const bytes = new Uint32Array(tam);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map(b => alfabeto[b % alfabeto.length]).join("");
+};
+
+lib.megasena = () => {
+  const s = new Set();
+  while (s.size < 6) s.add(1 + Math.floor(Math.random() * 60));
+  return [...s].sort((a, b) => a - b);
+};
+
+lib.rolarDado = (faces, qtd) => {
+  const rolagens = Array.from({ length: qtd }, () => 1 + Math.floor(Math.random() * faces));
+  return { rolagens, total: rolagens.reduce((a, b) => a + b, 0) };
+};
+
 /* ---------- runner de testes ---------- */
 const TESTES = [];
 
@@ -376,6 +422,48 @@ TESTES.push({ nome: "substituir literal e regex", fn: () => {
   assertEq(lib.substituir("a.b", ".", "!"), "a!b", "ponto é literal por padrão");
   assertEq(lib.substituir("a1b2", "\\d", "#", { regex: true }), "a#b#");
   assertEq(lib.substituir("Aa", "a", "x", { sensivel: true }), "Ax");
+}});
+TESTES.push({ nome: "contarTexto", fn: () => {
+  const r = lib.contarTexto("Olá mundo\nsegunda linha");
+  assertEq(r.caracteres, 23);
+  assertEq(r.semEspacos, 20);
+  assertEq(r.palavras, 4);
+  assertEq(r.linhas, 2);
+  assertEq(lib.contarTexto("").palavras, 0);
+}});
+TESTES.push({ nome: "sortear não repete e respeita o limite", fn: () => {
+  const r = lib.sortear(["a","b","c"], 2);
+  assertEq(r.length, 2);
+  assertEq(new Set(r).size, 2);
+  assertEq(lib.sortear(["a"], 5).length, 1);
+}});
+TESTES.push({ nome: "embaralhar preserva os elementos", fn: () => {
+  const orig = [1,2,3,4,5];
+  const r = lib.embaralhar(orig);
+  assertEq(r.slice().sort(), [1,2,3,4,5]);
+  assertEq(orig, [1,2,3,4,5], "não muta a entrada");
+}});
+TESTES.push({ nome: "gerarSenha respeita tamanho e conjuntos", fn: () => {
+  const s = lib.gerarSenha({ tamanho: 24, maiusculas: true, minusculas: true, numeros: true, simbolos: true });
+  assertEq(s.length, 24);
+  assertTrue(/[A-Z]/.test(s) && /[a-z]/.test(s) && /\d/.test(s));
+  const so = lib.gerarSenha({ tamanho: 10, numeros: true });
+  assertTrue(/^\d{10}$/.test(so), "só números: " + so);
+}});
+TESTES.push({ nome: "megasena: 6 dezenas únicas de 1 a 60 em ordem", fn: () => {
+  for (let i = 0; i < 50; i++) {
+    const j = lib.megasena();
+    assertEq(j.length, 6);
+    assertEq(new Set(j).size, 6);
+    assertTrue(j.every(n => n >= 1 && n <= 60));
+    assertEq(j.slice().sort((a,b)=>a-b), j, "deve vir ordenado");
+  }
+}});
+TESTES.push({ nome: "rolarDado soma e limita as faces", fn: () => {
+  const r = lib.rolarDado(6, 3);
+  assertEq(r.rolagens.length, 3);
+  assertTrue(r.rolagens.every(n => n >= 1 && n <= 6));
+  assertEq(r.total, r.rolagens.reduce((a,b)=>a+b,0));
 }});
 
 /* ---------- render provisório do runner ---------- */
@@ -594,6 +682,102 @@ TOOLS.push({
     ui.montar(el, a, ui.linha(b, t), r, c, ui.btn("Substituir", () => {
       try { s.set(lib.substituir(a.value, b.value, t.value, { regex: r.checked, sensivel: c.checked })); }
       catch (e) { s.set("Erro na expressão regular: " + e.message); }
+    }), s);
+  }
+});
+
+TOOLS.push({
+  id: "contador-caracteres", cat: "analise", tipo: "nativa",
+  nome: "Contador de Caracteres", desc: "Conta caracteres, palavras, linhas e parágrafos",
+  tags: ["contar", "palavras", "tamanho", "twitter"],
+  render(el) {
+    const a = ui.area("Texto");
+    const s = ui.saida();
+    const atualizar = () => {
+      const r = lib.contarTexto(a.value);
+      s.set(
+        "Caracteres:          " + r.caracteres + "\n" +
+        "Sem espaços:         " + r.semEspacos + "\n" +
+        "Palavras:            " + r.palavras + "\n" +
+        "Linhas:              " + r.linhas + "\n" +
+        "Parágrafos:          " + r.paragrafos
+      );
+    };
+    a.addEventListener("input", atualizar);
+    ui.montar(el, a, s);
+    atualizar();
+  }
+});
+
+TOOLS.push({
+  id: "sorteio", cat: "aleatorio", tipo: "nativa",
+  nome: "Sorteio", desc: "Sorteia nomes de uma lista, sem repetir",
+  tags: ["rifa", "ganhador", "premio", "escolher"],
+  render(el) {
+    const a = ui.area("Um nome por linha");
+    const n = ui.campo("Quantos ganhadores", "number", { value: 1, min: 1 });
+    const s = ui.saida();
+    ui.montar(el, a, n, ui.btn("Sortear", () => {
+      const itens = a.value.split("\n").map(x => x.trim()).filter(Boolean);
+      if (!itens.length) { s.set("Coloque pelo menos um nome."); return; }
+      s.set(lib.sortear(itens, +n.value || 1).map((x, i) => (i + 1) + "º — " + x).join("\n"));
+    }), s);
+  }
+});
+
+TOOLS.push({
+  id: "gerador-senha", cat: "aleatorio", tipo: "nativa",
+  nome: "Gerador de Senha", desc: "Cria senhas fortes com crypto.getRandomValues",
+  tags: ["password", "segura", "aleatoria", "chave"],
+  render(el) {
+    const t = ui.campo("Tamanho", "number", { value: 16, min: 4, max: 128 });
+    const ma = ui.campo("Maiúsculas (A-Z)", "checkbox", { checked: true });
+    const mi = ui.campo("Minúsculas (a-z)", "checkbox", { checked: true });
+    const nu = ui.campo("Números (2-9)", "checkbox", { checked: true });
+    const si = ui.campo("Símbolos (!@#$)", "checkbox", { checked: true });
+    const s = ui.saida();
+    const gerar = () => {
+      const r = lib.gerarSenha({
+        tamanho: +t.value, maiusculas: ma.checked, minusculas: mi.checked,
+        numeros: nu.checked, simbolos: si.checked
+      });
+      s.set(r || "Selecione ao menos um conjunto de caracteres.");
+    };
+    ui.montar(el, t, ma, mi, nu, si, ui.btn("Gerar senha", gerar), s);
+    gerar();
+  }
+});
+
+TOOLS.push({
+  id: "megasena", cat: "aleatorio", tipo: "nativa",
+  nome: "Números da Mega-Sena", desc: "Gera jogos de 6 dezenas de 01 a 60",
+  tags: ["loteria", "jogo", "dezenas", "aposta"],
+  render(el) {
+    const q = ui.campo("Quantos jogos", "number", { value: 1, min: 1, max: 50 });
+    const s = ui.saida();
+    const gerar = () => {
+      s.set(Array.from({ length: +q.value || 1 }, (_, i) =>
+        "Jogo " + (i + 1) + ": " + lib.megasena().map(n => String(n).padStart(2, "0")).join(" - ")
+      ).join("\n"));
+    };
+    ui.montar(el, q, ui.btn("Gerar jogos", gerar), s);
+    gerar();
+  }
+});
+
+TOOLS.push({
+  id: "dado", cat: "aleatorio", tipo: "nativa",
+  nome: "Dado Online", desc: "Rola dados de qualquer número de faces",
+  tags: ["rpg", "d6", "d20", "rolar", "sorte"],
+  render(el) {
+    const f = ui.select("Tipo de dado",
+      [4, 6, 8, 10, 12, 20, 100].map(n => ({ v: n, t: "D" + n })));
+    f.value = "6";
+    const q = ui.campo("Quantidade", "number", { value: 1, min: 1, max: 50 });
+    const s = ui.saida();
+    ui.montar(el, ui.linha(f, q), ui.btn("Rolar", () => {
+      const r = lib.rolarDado(+f.value, +q.value || 1);
+      s.set(r.rolagens.join("  ·  ") + "\n\nTotal: " + r.total);
     }), s);
   }
 });
