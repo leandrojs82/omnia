@@ -351,17 +351,32 @@ lib.hojeIso = () => {
 lib.diasEntre = (a, b) =>
   Math.round(Math.abs(lib.parseData(b) - lib.parseData(a)) / DIA_MS);
 
+// Soma anos+meses a uma data, ancorando ao meio-dia local; se o dia do mês de
+// origem não existir no mês de destino (ex.: 31 de janeiro + 1 mês), o
+// resultado é fixado (clamp) no último dia do mês de destino.
+function somarAnosMeses(d, anos, meses) {
+  let y = d.getFullYear() + anos;
+  let m = d.getMonth() + meses;
+  y += Math.floor(m / 12);
+  m = ((m % 12) + 12) % 12;
+  const maxDia = new Date(y, m + 1, 0).getDate();
+  const dia = Math.min(d.getDate(), maxDia);
+  return new Date(y, m, dia, 12, 0, 0, 0);
+}
+
 lib.idadeExata = (nascIso, refIso) => {
   const n = lib.parseData(nascIso), r = lib.parseData(refIso || lib.hojeIso());
   if (r < n) throw new Error("A data de referência é anterior ao nascimento.");
   let anos = r.getFullYear() - n.getFullYear();
   let meses = r.getMonth() - n.getMonth();
-  let dias = r.getDate() - n.getDate();
-  if (dias < 0) {
-    meses--;
-    dias += new Date(r.getFullYear(), r.getMonth(), 0).getDate();
-  }
   if (meses < 0) { anos--; meses += 12; }
+  let marco = somarAnosMeses(n, anos, meses);
+  if (marco > r) {
+    meses--;
+    if (meses < 0) { anos--; meses += 12; }
+    marco = somarAnosMeses(n, anos, meses);
+  }
+  const dias = Math.round((r - marco) / DIA_MS);
   return { anos, meses, dias, totalDias: Math.round((r - n) / DIA_MS) };
 };
 
@@ -684,11 +699,58 @@ TESTES.push({ nome: "idadeExata", fn: () => {
   const r = lib.idadeExata("2000-06-10", "2026-06-10");
   assertEq(r.anos, 26); assertEq(r.meses, 0); assertEq(r.dias, 0);
 }});
+TESTES.push({ nome: "idadeExata nunca devolve dias negativos (regressão)", fn: () => {
+  assertEq(lib.idadeExata("2000-01-31", "2000-03-01"), { anos: 0, meses: 1, dias: 1, totalDias: 30 });
+  assertEq(lib.idadeExata("2021-01-31", "2021-03-01"), { anos: 0, meses: 1, dias: 1, totalDias: 29 });
+  assertEq(lib.idadeExata("2001-01-30", "2001-03-01"), { anos: 0, meses: 1, dias: 1, totalDias: 30 });
+}});
+TESTES.push({ nome: "idadeExata satisfaz o invariante de round-trip (propriedade, aleatório)", fn: () => {
+  function addAnosMesesDias(base, anos, meses, dias) {
+    let y = base.getFullYear() + anos;
+    let m = base.getMonth() + meses;
+    y += Math.floor(m / 12); m = ((m % 12) + 12) % 12;
+    let dia = base.getDate();
+    const maxDia = new Date(y, m + 1, 0).getDate();
+    if (dia > maxDia) dia = maxDia;
+    let d = new Date(y, m, dia, 12, 0, 0, 0);
+    d = new Date(d.getFullYear(), d.getMonth(), d.getDate() + dias, 12, 0, 0, 0);
+    return d;
+  }
+  function isoDe(d) {
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+  let seed = Date.now() & 0x7fffffff;
+  function rand() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+  for (let i = 0; i < 500; i++) {
+    const anoN = 1950 + Math.floor(rand() * 80);
+    const mesN = Math.floor(rand() * 12);
+    const diaMaxN = new Date(anoN, mesN + 1, 0).getDate();
+    const diaN = 1 + Math.floor(rand() * diaMaxN);
+    const n = new Date(anoN, mesN, diaN, 12, 0, 0, 0);
+    const somaDias = Math.floor(rand() * 20000);
+    const r = new Date(n.getFullYear(), n.getMonth(), n.getDate() + somaDias, 12, 0, 0, 0);
+    const nIso = isoDe(n), rIso = isoDe(r);
+    const res = lib.idadeExata(nIso, rIso);
+    assertTrue(res.anos >= 0, "anos negativo para " + nIso + " -> " + rIso + ": " + JSON.stringify(res));
+    assertTrue(res.meses >= 0 && res.meses <= 11, "meses fora de 0-11 para " + nIso + " -> " + rIso + ": " + JSON.stringify(res));
+    assertTrue(res.dias >= 0, "dias negativo para " + nIso + " -> " + rIso + ": " + JSON.stringify(res));
+    const roundTrip = addAnosMesesDias(lib.parseData(nIso), res.anos, res.meses, res.dias);
+    assertEq(isoDe(roundTrip), rIso, "round-trip falhou para " + nIso + " -> " + rIso + ": " + JSON.stringify(res));
+  }
+}});
+TESTES.push({ nome: "parseData rejeita data impossível e string malformada", fn: () => {
+  assertThrows(() => lib.parseData("2026-02-30"), "30 de fevereiro não existe");
+  assertThrows(() => lib.parseData("não é uma data"), "string malformada");
+}});
 TESTES.push({ nome: "diasUteis conta seg-sex e exclui feriados", fn: () => {
   assertEq(lib.diasUteis("2026-01-05", "2026-01-09"), 5, "seg a sex");
   assertEq(lib.diasUteis("2026-01-05", "2026-01-11"), 5, "inclui fim de semana");
   assertEq(lib.diasUteis("2026-01-05", "2026-01-09", ["2026-01-07"]), 4);
   assertEq(lib.diasUteis("2026-01-10", "2026-01-11"), 0, "só sáb e dom");
+}});
+TESTES.push({ nome: "diasUteis aceita intervalo invertido e não desconta feriado em fim de semana duas vezes", fn: () => {
+  assertEq(lib.diasUteis("2026-01-09", "2026-01-05"), 5, "intervalo invertido dá o mesmo resultado");
+  assertEq(lib.diasUteis("2026-01-05", "2026-01-11", ["2026-01-10"]), 5, "feriado em sábado não é subtraído de novo");
 }});
 
 /* ---------- render provisório do runner ---------- */
