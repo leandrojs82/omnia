@@ -169,6 +169,41 @@ lib.buscar = (termo, tools) => {
   );
 };
 
+lib.inverter = s => [...(s || "")].reverse().join("");
+
+lib.caixa = (s, modo) => {
+  s = s || "";
+  switch (modo) {
+    case "maiuscula": return s.toUpperCase();
+    case "minuscula": return s.toLowerCase();
+    case "titulo": return s.toLowerCase().replace(/(^|\s)(\S)/g, (m, a, b) => a + b.toUpperCase());
+    case "frase": return s.toLowerCase().replace(/(^\s*|[.!?]\s+)(\S)/g, (m, a, b) => a + b.toUpperCase());
+    case "alternada": return [...s].map((c, i) => i % 2 ? c.toLowerCase() : c.toUpperCase()).join("");
+    default: return s;
+  }
+};
+
+lib.removerDuplicadas = (s, ignorarCaixa = false) => {
+  const vistos = new Set();
+  return (s || "").split("\n").filter(l => {
+    const k = ignorarCaixa ? l.toLowerCase() : l;
+    if (vistos.has(k)) return false;
+    vistos.add(k); return true;
+  }).join("\n");
+};
+
+lib.ordenar = (s, decrescente = false) => {
+  const ls = (s || "").split("\n").sort((a, b) => a.localeCompare(b, "pt-BR"));
+  return (decrescente ? ls.reverse() : ls).join("\n");
+};
+
+lib.substituir = (s, busca, troca, op = {}) => {
+  if (!busca) return s || "";
+  const flags = "g" + (op.sensivel ? "" : "i");
+  const padrao = op.regex ? busca : busca.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return (s || "").replace(new RegExp(padrao, flags), troca);
+};
+
 /* ---------- runner de testes ---------- */
 const TESTES = [];
 
@@ -314,6 +349,33 @@ TESTES.push({ nome: "buscar acha por tag e por desc", fn: () => {
 TESTES.push({ nome: "buscar com termo vazio devolve tudo", fn: () => {
   const t = [{ id: "a", nome: "A", desc: "", tags: [] }, { id: "b", nome: "B", desc: "", tags: [] }];
   assertEq(lib.buscar("  ", t).length, 2);
+}});
+
+TESTES.push({ nome: "inverter", fn: () => {
+  assertEq(lib.inverter("abc"), "cba");
+  assertEq(lib.inverter(""), "");
+}});
+TESTES.push({ nome: "caixa nos 5 modos", fn: () => {
+  assertEq(lib.caixa("olá mundo", "maiuscula"), "OLÁ MUNDO");
+  assertEq(lib.caixa("OLÁ MUNDO", "minuscula"), "olá mundo");
+  assertEq(lib.caixa("olá mundo", "titulo"), "Olá Mundo");
+  assertEq(lib.caixa("olá mundo. tudo bem", "frase"), "Olá mundo. Tudo bem");
+  assertEq(lib.caixa("abcd", "alternada"), "AbCd");
+}});
+TESTES.push({ nome: "removerDuplicadas preserva a ordem", fn: () => {
+  assertEq(lib.removerDuplicadas("a\nb\na\nc"), "a\nb\nc");
+  assertEq(lib.removerDuplicadas("A\na"), "A\na");
+  assertEq(lib.removerDuplicadas("A\na", true), "A");
+}});
+TESTES.push({ nome: "ordenar alfabeticamente com acento", fn: () => {
+  assertEq(lib.ordenar("banana\nabacaxi\námora"), "abacaxi\námora\nbanana");
+  assertEq(lib.ordenar("a\nb", true), "b\na");
+}});
+TESTES.push({ nome: "substituir literal e regex", fn: () => {
+  assertEq(lib.substituir("a-b-c", "-", "+"), "a+b+c");
+  assertEq(lib.substituir("a.b", ".", "!"), "a!b", "ponto é literal por padrão");
+  assertEq(lib.substituir("a1b2", "\\d", "#", { regex: true }), "a#b#");
+  assertEq(lib.substituir("Aa", "a", "x", { sensivel: true }), "Ax");
 }});
 
 /* ---------- render provisório do runner ---------- */
@@ -463,6 +525,78 @@ const ui = {
 /* ---------- registry ---------- */
 const TOOLS = [];
 const getTool = id => TOOLS.find(t => t.id === id);
+
+TOOLS.push({
+  id: "inverter-texto", cat: "texto", tipo: "nativa",
+  nome: "Inverter Texto", desc: "Escreve o texto de trás para frente",
+  tags: ["reverso", "espelho", "backwards"],
+  render(el) {
+    const a = ui.area("Texto");
+    const s = ui.saida();
+    ui.montar(el, a, ui.btn("Inverter", () => s.set(lib.inverter(a.value))), s);
+  }
+});
+
+TOOLS.push({
+  id: "maiusculas-minusculas", cat: "texto", tipo: "nativa",
+  nome: "Maiúsculas e Minúsculas", desc: "Converte a caixa do texto",
+  tags: ["caixa alta", "baixa", "uppercase", "lowercase", "capitalizar"],
+  render(el) {
+    const a = ui.area("Texto");
+    const m = ui.select("Modo", [
+      { v: "maiuscula", t: "MAIÚSCULAS" }, { v: "minuscula", t: "minúsculas" },
+      { v: "titulo", t: "Título" }, { v: "frase", t: "Frase" }, { v: "alternada", t: "AlTeRnAdA" }
+    ]);
+    const s = ui.saida();
+    ui.montar(el, a, m, ui.btn("Converter", () => s.set(lib.caixa(a.value, m.value))), s);
+  }
+});
+
+TOOLS.push({
+  id: "remover-duplicadas", cat: "texto", tipo: "nativa",
+  nome: "Remover Linhas Duplicadas", desc: "Limpa listas mantendo a ordem original",
+  tags: ["unico", "distinct", "repetido", "lista"],
+  render(el) {
+    const a = ui.area("Uma linha por item");
+    const c = ui.campo("Ignorar maiúsculas/minúsculas", "checkbox");
+    const s = ui.saida();
+    ui.montar(el, a, c, ui.btn("Limpar", () => {
+      const r = lib.removerDuplicadas(a.value, c.checked);
+      const antes = a.value.split("\n").length, depois = r.split("\n").length;
+      s.set(r + "\n\n— " + (antes - depois) + " duplicadas removidas");
+    }), s);
+  }
+});
+
+TOOLS.push({
+  id: "ordem-alfabetica", cat: "texto", tipo: "nativa",
+  nome: "Ordem Alfabética", desc: "Ordena a lista de A a Z ou de Z a A",
+  tags: ["sort", "classificar", "az", "za"],
+  render(el) {
+    const a = ui.area("Uma linha por item");
+    const d = ui.campo("Ordem decrescente (Z→A)", "checkbox");
+    const s = ui.saida();
+    ui.montar(el, a, d, ui.btn("Ordenar", () => s.set(lib.ordenar(a.value, d.checked))), s);
+  }
+});
+
+TOOLS.push({
+  id: "localizar-substituir", cat: "texto", tipo: "nativa",
+  nome: "Localizar e Substituir", desc: "Troca trechos do texto, com suporte a regex",
+  tags: ["replace", "trocar", "regex", "buscar"],
+  render(el) {
+    const a = ui.area("Texto");
+    const b = ui.campo("Localizar");
+    const t = ui.campo("Substituir por");
+    const r = ui.campo("Usar expressão regular", "checkbox");
+    const c = ui.campo("Diferenciar maiúsculas", "checkbox");
+    const s = ui.saida();
+    ui.montar(el, a, ui.linha(b, t), r, c, ui.btn("Substituir", () => {
+      try { s.set(lib.substituir(a.value, b.value, t.value, { regex: r.checked, sensivel: c.checked })); }
+      catch (e) { s.set("Erro na expressão regular: " + e.message); }
+    }), s);
+  }
+});
 
 /* ---------- sidebar ---------- */
 const SELOS = { nativa: "🟢", online: "🔵", script: "🟡" };
