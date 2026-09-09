@@ -452,6 +452,99 @@ lib.converterBase = (valor, de, para) => {
   return n.toString(para).toUpperCase();
 };
 
+/* ---------- geradores de desenvolvedor ---------- */
+const soDigitos = s => (s || "").replace(/\D/g, "");
+
+lib.validarCPF = s => {
+  const c = soDigitos(s);
+  if (c.length !== 11 || /^(\d)\1{10}$/.test(c)) return false;
+  for (let t = 9; t < 11; t++) {
+    let soma = 0;
+    for (let i = 0; i < t; i++) soma += +c[i] * (t + 1 - i);
+    let d = (soma * 10) % 11;
+    if (d === 10) d = 0;
+    if (d !== +c[t]) return false;
+  }
+  return true;
+};
+
+lib.gerarCPF = (formatado = true) => {
+  const n = Array.from({ length: 9 }, () => Math.floor(Math.random() * 10));
+  for (let t = 9; t < 11; t++) {
+    let soma = 0;
+    for (let i = 0; i < t; i++) soma += n[i] * (t + 1 - i);
+    let d = (soma * 10) % 11;
+    n.push(d === 10 ? 0 : d);
+  }
+  const c = n.join("");
+  if (/^(\d)\1{10}$/.test(c)) return lib.gerarCPF(formatado);
+  return formatado ? c.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4") : c;
+};
+
+const PESOS_CNPJ = [6,5,4,3,2,9,8,7,6,5,4,3,2];
+
+lib.validarCNPJ = s => {
+  const c = soDigitos(s);
+  if (c.length !== 14 || /^(\d)\1{13}$/.test(c)) return false;
+  for (let t = 12; t < 14; t++) {
+    const pesos = PESOS_CNPJ.slice(13 - t);
+    let soma = 0;
+    for (let i = 0; i < t; i++) soma += +c[i] * pesos[i];
+    const r = soma % 11;
+    if ((r < 2 ? 0 : 11 - r) !== +c[t]) return false;
+  }
+  return true;
+};
+
+lib.gerarCNPJ = (formatado = true) => {
+  const n = Array.from({ length: 8 }, () => Math.floor(Math.random() * 10))
+    .concat([0, 0, 0, 1]);
+  for (let t = 12; t < 14; t++) {
+    const pesos = PESOS_CNPJ.slice(13 - t);
+    let soma = 0;
+    for (let i = 0; i < t; i++) soma += n[i] * pesos[i];
+    const r = soma % 11;
+    n.push(r < 2 ? 0 : 11 - r);
+  }
+  const c = n.join("");
+  return formatado ? c.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5") : c;
+};
+
+lib.uuidV4 = () => {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+  return h.slice(0,8)+"-"+h.slice(8,12)+"-"+h.slice(12,16)+"-"+h.slice(16,20)+"-"+h.slice(20);
+};
+
+const LOREM = ("lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor " +
+  "incididunt ut labore et dolore magna aliqua enim ad minim veniam quis nostrud exercitation " +
+  "ullamco laboris nisi aliquip ex ea commodo consequat duis aute irure in reprehenderit " +
+  "voluptate velit esse cillum eu fugiat nulla pariatur excepteur sint occaecat cupidatat non " +
+  "proident sunt culpa qui officia deserunt mollit anim id est laborum").split(" ");
+
+lib.lorem = (paragrafos, palavrasPorParagrafo = 45) => {
+  const frase = qtd => {
+    const p = Array.from({ length: qtd }, () => LOREM[Math.floor(Math.random() * LOREM.length)]);
+    return p[0][0].toUpperCase() + p[0].slice(1) + " " + p.slice(1).join(" ") + ".";
+  };
+  const paras = [];
+  for (let i = 0; i < paragrafos; i++) {
+    let texto = "", usadas = 0;
+    while (usadas < palavrasPorParagrafo) {
+      const n = 6 + Math.floor(Math.random() * 10);
+      texto += (texto ? " " : "") + frase(n);
+      usadas += n;
+    }
+    paras.push(texto);
+  }
+  if (paras.length) paras[0] = "Lorem ipsum dolor sit amet, " +
+    paras[0][0].toLowerCase() + paras[0].slice(1);
+  return paras.join("\n\n");
+};
+
 /* ---------- runner de testes ---------- */
 const TESTES = [];
 
@@ -854,6 +947,45 @@ TESTES.push({ nome: "deRomano numeral mal formado reporta mensagem correta", fn:
   let msg = "";
   try { lib.deRomano("MMMM"); } catch (e) { msg = e.message; }
   assertEq(msg, "Numeral romano mal formado.");
+}});
+
+TESTES.push({ nome: "CPF gerado é sempre válido", fn: () => {
+  for (let i = 0; i < 200; i++) {
+    const c = lib.gerarCPF(false);
+    assertTrue(/^\d{11}$/.test(c), "formato: " + c);
+    assertTrue(lib.validarCPF(c), "inválido: " + c);
+  }
+  assertTrue(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(lib.gerarCPF()), "formatado");
+}});
+TESTES.push({ nome: "validarCPF rejeita casos ruins", fn: () => {
+  assertEq(lib.validarCPF("111.111.111-11"), false, "todos iguais");
+  assertEq(lib.validarCPF("123.456.789-00"), false);
+  assertEq(lib.validarCPF("123"), false);
+  assertEq(lib.validarCPF(""), false);
+  assertEq(lib.validarCPF("529.982.247-25"), true, "CPF válido conhecido");
+}});
+TESTES.push({ nome: "CNPJ gerado é sempre válido", fn: () => {
+  for (let i = 0; i < 200; i++) {
+    const c = lib.gerarCNPJ(false);
+    assertTrue(/^\d{14}$/.test(c), "formato: " + c);
+    assertTrue(lib.validarCNPJ(c), "inválido: " + c);
+  }
+  assertTrue(/^\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}$/.test(lib.gerarCNPJ()), "formatado");
+}});
+TESTES.push({ nome: "validarCNPJ rejeita casos ruins", fn: () => {
+  assertEq(lib.validarCNPJ("11.111.111/1111-11"), false);
+  assertEq(lib.validarCNPJ("11.222.333/0001-81"), true, "CNPJ válido conhecido");
+}});
+TESTES.push({ nome: "uuidV4 tem formato e versão corretos", fn: () => {
+  const u = lib.uuidV4();
+  assertTrue(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(u), u);
+  const s = new Set(Array.from({ length: 500 }, lib.uuidV4));
+  assertEq(s.size, 500, "sem colisão");
+}});
+TESTES.push({ nome: "lorem gera a quantidade pedida", fn: () => {
+  const t = lib.lorem(3);
+  assertEq(t.split("\n\n").length, 3);
+  assertTrue(t.startsWith("Lorem ipsum"));
 }});
 
 /* ---------- render provisório do runner ---------- */
@@ -1373,6 +1505,89 @@ TOOLS.push({
           b.t.padEnd(20) + lib.converterBase(v.value, +de.value, +b.v)).join("\n"));
       } catch (e) { s.set("Erro: " + e.message); }
     }), s);
+  }
+});
+
+TOOLS.push({
+  id: "gerador-cpf", cat: "dev", tipo: "nativa",
+  nome: "Gerador de CPF", desc: "CPFs matematicamente válidos para testes de sistema",
+  tags: ["documento", "mock", "teste", "validar"],
+  render(el) {
+    const q = ui.campo("Quantidade", "number", { value: 5, min: 1, max: 200 });
+    const f = ui.campo("Com pontuação", "checkbox", { checked: true });
+    const s = ui.saida();
+    const v = ui.campo("Validar um CPF", "text", { placeholder: "000.000.000-00" });
+    const sv = ui.saida();
+    ui.montar(el, ui.linha(q, f), ui.btn("Gerar", () =>
+      s.set(Array.from({ length: lib.inteiro(q.value, 1, 200, 5) }, () => lib.gerarCPF(f.checked)).join("\n"))
+    ), s);
+    const hr = document.createElement("hr");
+    hr.style.cssText = "margin:26px 0;border:0;border-top:1px solid var(--borda)";
+    el.appendChild(hr);
+    ui.montar(el, v, ui.btn("Validar", () =>
+      sv.set(lib.validarCPF(v.value) ? "✅ CPF válido" : "❌ CPF inválido"), "secundaria"
+    ), sv);
+    const aviso = document.createElement("p");
+    aviso.style.cssText = "color:var(--texto-fraco);font-size:13px;margin-top:18px";
+    aviso.textContent = "Os números são gerados aleatoriamente e servem apenas para testar sistemas. Não pertencem a nenhuma pessoa real.";
+    el.appendChild(aviso);
+  }
+});
+
+TOOLS.push({
+  id: "gerador-cnpj", cat: "dev", tipo: "nativa",
+  nome: "Gerador de CNPJ", desc: "CNPJs matematicamente válidos para testes de sistema",
+  tags: ["documento", "empresa", "mock", "teste"],
+  render(el) {
+    const q = ui.campo("Quantidade", "number", { value: 5, min: 1, max: 200 });
+    const f = ui.campo("Com pontuação", "checkbox", { checked: true });
+    const s = ui.saida();
+    const v = ui.campo("Validar um CNPJ", "text", { placeholder: "00.000.000/0001-00" });
+    const sv = ui.saida();
+    ui.montar(el, ui.linha(q, f), ui.btn("Gerar", () =>
+      s.set(Array.from({ length: lib.inteiro(q.value, 1, 200, 5) }, () => lib.gerarCNPJ(f.checked)).join("\n"))
+    ), s);
+    const hr = document.createElement("hr");
+    hr.style.cssText = "margin:26px 0;border:0;border-top:1px solid var(--borda)";
+    el.appendChild(hr);
+    ui.montar(el, v, ui.btn("Validar", () =>
+      sv.set(lib.validarCNPJ(v.value) ? "✅ CNPJ válido" : "❌ CNPJ inválido"), "secundaria"
+    ), sv);
+    const aviso = document.createElement("p");
+    aviso.style.cssText = "color:var(--texto-fraco);font-size:13px;margin-top:18px";
+    aviso.textContent = "Números fictícios para teste. Não correspondem a empresas reais.";
+    el.appendChild(aviso);
+  }
+});
+
+TOOLS.push({
+  id: "uuid", cat: "dev", tipo: "nativa",
+  nome: "Gerador de UUID v4", desc: "Identificadores únicos com aleatoriedade criptográfica",
+  tags: ["guid", "id", "unico", "chave"],
+  render(el) {
+    const q = ui.campo("Quantidade", "number", { value: 5, min: 1, max: 500 });
+    const M = ui.campo("Maiúsculas", "checkbox");
+    const s = ui.saida();
+    const gerar = () => {
+      const l = Array.from({ length: lib.inteiro(q.value, 1, 500, 5) }, lib.uuidV4);
+      s.set((M.checked ? l.map(x => x.toUpperCase()) : l).join("\n"));
+    };
+    ui.montar(el, ui.linha(q, M), ui.btn("Gerar", gerar), s);
+    gerar();
+  }
+});
+
+TOOLS.push({
+  id: "lorem-ipsum", cat: "dev", tipo: "nativa",
+  nome: "Gerador de Lorem Ipsum", desc: "Texto de preenchimento para layouts",
+  tags: ["placeholder", "texto falso", "dummy", "design"],
+  render(el) {
+    const p = ui.campo("Parágrafos", "number", { value: 3, min: 1, max: 50 });
+    const w = ui.campo("Palavras por parágrafo (aprox.)", "number", { value: 45, min: 10, max: 300 });
+    const s = ui.saida();
+    const gerar = () => s.set(lib.lorem(lib.inteiro(p.value, 1, 50, 3), lib.inteiro(w.value, 10, 300, 45)));
+    ui.montar(el, ui.linha(p, w), ui.btn("Gerar", gerar), s);
+    gerar();
   }
 });
 
