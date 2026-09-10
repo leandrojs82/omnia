@@ -83,6 +83,11 @@ header {
 }
 .campo textarea { min-height: 130px; resize: vertical; font-family: var(--mono); font-size: 13px; }
 .campo input:focus, .campo textarea:focus, .campo select:focus { border-color: var(--acento); }
+.campo:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 8px; }
+.campo input[type="checkbox"] {
+  order: -1; width: 16px; height: 16px; padding: 0; margin: 0; flex: 0 0 auto;
+}
+.campo:has(input[type="checkbox"]) label { margin-bottom: 0; }
 .linha { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
 .linha > .campo { flex: 1 1 160px; margin-bottom: 14px; }
 .btn {
@@ -95,7 +100,7 @@ header {
 .saida {
   position: relative; margin-top: 16px; padding: 14px; min-height: 46px;
   background: var(--surface); border: 1px solid var(--borda); border-radius: var(--r);
-  font-family: var(--mono); font-size: 13px; white-space: pre-wrap; word-break: break-word;
+  font-family: var(--mono); font-size: 13px; white-space: pre; word-break: normal;
   overflow-x: auto;
 }
 .saida .copiar {
@@ -105,6 +110,8 @@ header {
   border: 1px solid var(--borda); border-radius: 7px;
 }
 .saida[data-tem="sim"] .copiar { display: block; }
+.nota { color: var(--texto-fraco); font-size: 13px; margin-top: 18px; }
+.separador { margin: 26px 0; border: 0; border-top: 1px solid var(--borda); }
 #toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
   padding: 10px 18px; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 50;
@@ -449,6 +456,9 @@ lib.converterBase = (valor, de, para) => {
   const regex = new RegExp("^[" + alfabeto + "]+$");
   if (!v || !regex.test(v)) throw new Error("Valor inválido para a base " + de + ".");
   const n = parseInt(v, de);
+  if (!Number.isSafeInteger(n)) {
+    throw new Error("Número grande demais para converter com precisão (acima de " + Number.MAX_SAFE_INTEGER + ").");
+  }
   return n.toString(para).toUpperCase();
 };
 
@@ -643,18 +653,43 @@ TESTES.push({ nome: "estado aberta da categoria respeita recolhidas e ativa", fn
   assertEq(estadoAbertaCategoria("cat-z", 0, false), "nao", "sem ferramentas deve ficar fechada");
 }});
 
+// Detecta se localStorage está bloqueado (modo privado restrito, política do
+// navegador, etc.). Os três testes de persistência abaixo usam isso para
+// verificar a degradação graciosa em vez de falhar quando o storage não
+// está disponível — o site continua funcionando (tudo passa por `store`,
+// que engole os erros), só não persiste entre sessões.
+function storageBloqueado() {
+  try {
+    localStorage.setItem("omnia.__probe", "1");
+    localStorage.removeItem("omnia.__probe");
+    return false;
+  } catch (e) {
+    return true;
+  }
+}
+
 TESTES.push({ nome: "store grava e lê JSON", fn: () => {
   try {
     store.gravar("omnia.__t", { a: 1 });
-    assertEq(store.ler("omnia.__t", null), { a: 1 });
+    if (storageBloqueado()) {
+      assertEq(store.ler("omnia.__t", null), null, "com storage bloqueado, deve cair no padrão");
+    } else {
+      assertEq(store.ler("omnia.__t", null), { a: 1 });
+    }
   } finally {
-    localStorage.removeItem("omnia.__t");
+    try { localStorage.removeItem("omnia.__t"); } catch (e) {}
   }
 }});
 TESTES.push({ nome: "store.ler devolve o padrão quando não existe", fn: () => {
   assertEq(store.ler("omnia.__nada", "pad"), "pad");
 }});
 TESTES.push({ nome: "recentes limita a 6 e não duplica", fn: () => {
+  if (storageBloqueado()) {
+    const antes = store.recentes();
+    ["a","b","c"].forEach(store.registrarUso);
+    assertEq(store.recentes(), antes, "com storage bloqueado, recentes segue vazio (nada persiste)");
+    return;
+  }
   const bkp = store.ler("omnia.recentes", []);
   try {
     store.gravar("omnia.recentes", []);
@@ -667,6 +702,13 @@ TESTES.push({ nome: "recentes limita a 6 e não duplica", fn: () => {
   }
 }});
 TESTES.push({ nome: "alternarFavorito adiciona e remove", fn: () => {
+  if (storageBloqueado()) {
+    // Sem persistência, cada chamada relê favoritos vazios — o toggle nunca
+    // "vê" a chamada anterior, então soma "x" duas vezes em vez de alternar.
+    assertEq(store.alternarFavorito("x"), ["x"], "adiciona em memória mesmo sem persistir");
+    assertEq(store.alternarFavorito("x"), ["x"], "sem estado anterior persistido, não há o que remover");
+    return;
+  }
   const bkp = store.ler("omnia.favoritos", []);
   try {
     store.gravar("omnia.favoritos", []);
@@ -708,6 +750,18 @@ TESTES.push({ nome: "ui.linha e ui.montar anexam .wrapper quando existe e o nó 
   assertTrue(el.contains(campo2.wrapper), "montar deveria conter o wrapper do campo");
   assertTrue(el.querySelector("label") !== null, "wrapper com label deve estar presente em montar");
   assertTrue(el.contains(botao2), "montar deveria conter o botão puro (sem wrapper)");
+}});
+TESTES.push({ nome: "ui.nota e ui.separador devolvem nós simples com a classe certa", fn: () => {
+  const n = ui.nota("Aviso importante");
+  assertEq(n.tagName, "P");
+  assertTrue(n.classList.contains("nota"), "ui.nota deve usar a classe .nota");
+  assertEq(n.textContent, "Aviso importante");
+  assertTrue(!n.wrapper, "ui.nota não é um campo, não deve ter .wrapper");
+
+  const sep = ui.separador();
+  assertEq(sep.tagName, "HR");
+  assertTrue(sep.classList.contains("separador"), "ui.separador deve usar a classe .separador");
+  assertTrue(!sep.wrapper, "ui.separador não é um campo, não deve ter .wrapper");
 }});
 TESTES.push({ nome: "ui.saida alterna data-tem ao definir e limpar o texto", fn: () => {
   const s = ui.saida();
@@ -982,6 +1036,14 @@ TESTES.push({ nome: "converterBase aceita entrada válida", fn: () => {
 TESTES.push({ nome: "converterBase rejeita sinal negativo", fn: () => {
   assertThrows(() => lib.converterBase("-10", 2, 10), "sinal negativo não é suportado");
 }});
+TESTES.push({ nome: "converterBase rejeita números que perderiam precisão (> 2^53)", fn: () => {
+  assertThrows(() => lib.converterBase("12345678901234567890", 10, 16),
+    "além de Number.MAX_SAFE_INTEGER deveria lançar em vez de arredondar");
+  assertThrows(() => lib.converterBase("99999999999999999999", 10, 10),
+    "conversão decimal-decimal também deve rejeitar valor grande demais");
+  // Garante que conversões seguras continuam funcionando normalmente.
+  assertEq(lib.converterBase(String(Number.MAX_SAFE_INTEGER), 10, 16), Number.MAX_SAFE_INTEGER.toString(16).toUpperCase());
+}});
 TESTES.push({ nome: "deRomano numeral mal formado reporta mensagem correta", fn: () => {
   let msg = "";
   try { lib.deRomano("MMMM"); } catch (e) { msg = e.message; }
@@ -1012,7 +1074,8 @@ TESTES.push({ nome: "CNPJ gerado é sempre válido", fn: () => {
   assertTrue(/^\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}$/.test(lib.gerarCNPJ()), "formatado");
 }});
 TESTES.push({ nome: "validarCNPJ rejeita casos ruins", fn: () => {
-  assertEq(lib.validarCNPJ("11.111.111/1111-11"), false);
+  assertEq(lib.validarCNPJ("11.111.111/1111-11"), false, "repdígito");
+  assertEq(lib.validarCNPJ("11.222.333/0001-82"), false, "dígito verificador errado (não é repdígito)");
   assertEq(lib.validarCNPJ("11.222.333/0001-81"), true, "CNPJ válido conhecido");
 }});
 TESTES.push({ nome: "uuidV4 tem formato e versão corretos", fn: () => {
@@ -1205,6 +1268,17 @@ const ui = {
     t.dataset.ver = "sim";
     clearTimeout(ui._tt);
     ui._tt = setTimeout(() => (t.dataset.ver = "nao"), 1800);
+  },
+  nota(texto) {
+    const p = document.createElement("p");
+    p.className = "nota";
+    p.textContent = texto;
+    return p;
+  },
+  separador() {
+    const hr = document.createElement("hr");
+    hr.className = "separador";
+    return hr;
   },
   linha(...nos) {
     const d = document.createElement("div");
@@ -1420,10 +1494,7 @@ TOOLS.push({
         ui.btn("Texto → Morse", () => s.set(lib.paraMorse(a.value))),
         ui.btn("Morse → Texto", () => s.set(lib.deMorse(a.value)), "secundaria")
       ), s);
-    const nota = document.createElement("p");
-    nota.style.cssText = "color:var(--texto-fraco);font-size:13px";
-    nota.textContent = "Letras separadas por espaço, palavras por barra ( / ). Acentos são removidos.";
-    el.appendChild(nota);
+    el.appendChild(ui.nota("Letras separadas por espaço, palavras por barra ( / ). Acentos são removidos."));
   }
 });
 
@@ -1606,16 +1677,11 @@ TOOLS.push({
     ui.montar(el, ui.linha(q, f), ui.btn("Gerar", () =>
       s.set(Array.from({ length: lib.inteiro(q.value, 1, 200, 5) }, () => lib.gerarCPF(f.checked)).join("\n"))
     ), s);
-    const hr = document.createElement("hr");
-    hr.style.cssText = "margin:26px 0;border:0;border-top:1px solid var(--borda)";
-    el.appendChild(hr);
+    el.appendChild(ui.separador());
     ui.montar(el, v, ui.btn("Validar", () =>
       sv.set(lib.validarCPF(v.value) ? "✅ CPF válido" : "❌ CPF inválido"), "secundaria"
     ), sv);
-    const aviso = document.createElement("p");
-    aviso.style.cssText = "color:var(--texto-fraco);font-size:13px;margin-top:18px";
-    aviso.textContent = "Os números são gerados aleatoriamente e servem apenas para testar sistemas. Não pertencem a nenhuma pessoa real.";
-    el.appendChild(aviso);
+    el.appendChild(ui.nota("Os números são gerados aleatoriamente e servem apenas para testar sistemas. Não pertencem a nenhuma pessoa real."));
   }
 });
 
@@ -1632,16 +1698,11 @@ TOOLS.push({
     ui.montar(el, ui.linha(q, f), ui.btn("Gerar", () =>
       s.set(Array.from({ length: lib.inteiro(q.value, 1, 200, 5) }, () => lib.gerarCNPJ(f.checked)).join("\n"))
     ), s);
-    const hr = document.createElement("hr");
-    hr.style.cssText = "margin:26px 0;border:0;border-top:1px solid var(--borda)";
-    el.appendChild(hr);
+    el.appendChild(ui.separador());
     ui.montar(el, v, ui.btn("Validar", () =>
       sv.set(lib.validarCNPJ(v.value) ? "✅ CNPJ válido" : "❌ CNPJ inválido"), "secundaria"
     ), sv);
-    const aviso = document.createElement("p");
-    aviso.style.cssText = "color:var(--texto-fraco);font-size:13px;margin-top:18px";
-    aviso.textContent = "Números fictícios para teste. Não correspondem a empresas reais.";
-    el.appendChild(aviso);
+    el.appendChild(ui.nota("Números fictícios para teste. Não correspondem a empresas reais."));
   }
 });
 
@@ -1694,10 +1755,7 @@ TOOLS.push({
           "Faixa de peso normal para " + alt + " m: de " + faixa.min + " kg até " + faixa.max + " kg");
       } catch (e) { s.set("Erro: " + e.message); }
     }), s);
-    const aviso = document.createElement("p");
-    aviso.style.cssText = "color:var(--texto-fraco);font-size:13px;margin-top:18px";
-    aviso.textContent = "O IMC é um indicador populacional e não considera composição corporal, idade ou sexo. Não substitui avaliação profissional.";
-    el.appendChild(aviso);
+    el.appendChild(ui.nota("O IMC é um indicador populacional e não considera composição corporal, idade ou sexo. Não substitui avaliação profissional."));
   }
 });
 
@@ -1716,7 +1774,7 @@ function renderSidebar() {
   const ativa = (location.hash.match(/^#\/([\w-]+)/) || [])[1];
   const favs = store.favoritos().map(getTool).filter(Boolean);
   const blocoFav = favs.length
-    ? '<div class="cat" data-aberta="sim"><button>⭐ Favoritos</button><ul>' +
+    ? '<div class="cat" data-cat="_fav" data-aberta="sim"><button>⭐ Favoritos</button><ul>' +
       favs.map(t => '<li><a href="#/' + t.id + '">' + SELOS[t.tipo] + ' ' + t.nome + '</a></li>').join("") +
       '</ul></div>'
     : "";
@@ -1764,7 +1822,11 @@ function navegar() {
     store.registrarUso(tool.id);
     const fav = ui.btn(
       store.favoritos().includes(tool.id) ? "★ Favorita" : "☆ Favoritar",
-      e => { store.alternarFavorito(tool.id); navegar(); },
+      () => {
+        const favs = store.alternarFavorito(tool.id);
+        fav.textContent = favs.includes(tool.id) ? "★ Favorita" : "☆ Favoritar";
+        renderSidebar();
+      },
       "secundaria"
     );
     cab.appendChild(fav);
