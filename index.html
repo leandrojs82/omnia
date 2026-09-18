@@ -177,6 +177,14 @@ header {
 .pomo-wrap:fullscreen .pomo-tempo { font-size: min(28vw, 320px); }
 .pomo-wrap:fullscreen .pomo-yt { max-width: 520px; max-height: 300px; }
 @media (max-width: 767px) { .pomo-tempo { font-size: 72px; } }
+.fmt-lista { display: flex; flex-direction: column; margin-top: 22px; border-top: 1px solid var(--linha); }
+.fmt-linha { display: grid; grid-template-columns: 190px minmax(0, 1fr) auto; gap: 16px; align-items: baseline; padding: 11px 0; border-bottom: 1px solid var(--borda); }
+.fmt-rotulo { font-size: 12px; color: var(--texto-fraco); letter-spacing: 1px; text-transform: uppercase; }
+.fmt-valor { font-family: var(--mono); font-size: 15px; overflow-x: auto; white-space: nowrap; }
+.fmt-copiar { padding: 2px 0; font: inherit; font-size: 13px; cursor: pointer; background: none; border: 0; color: var(--texto); text-decoration: underline; text-underline-offset: 4px; }
+.fmt-copiar:hover { color: var(--acento); }
+.fmt-tokens { font-family: var(--mono); font-size: 12px; }
+@media (max-width: 767px) { .fmt-linha { grid-template-columns: 1fr auto; } .fmt-valor { grid-column: 1 / -1; } }
 .nota { color: var(--texto-fraco); font-size: 13px; line-height: 1.6; margin-top: 18px; max-width: 560px; }
 .separador { margin: 32px 0; border: 0; border-top: 1px solid var(--borda); }
 #toast {
@@ -699,6 +707,115 @@ lib.imcFaixaPeso = (altura) => {
   const min = Math.ceil(limiteInferior * area * 10) / 10;
   const max = Math.floor(limiteSuperior * area * 10 - 1e-6) / 10;
   return { min, max };
+};
+
+/* ---------- formatar data e hora ---------- */
+const MESES_PT = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+const DIAS_PT = ["domingo","segunda-feira","terça-feira","quarta-feira","quinta-feira","sexta-feira","sábado"];
+const MESES_EN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const DIAS_EN = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const p2 = n => String(n).padStart(2, "0");
+
+// Le data (e hora opcional) em qualquer forma comum. Sem hora, ancora ao meio-dia local.
+// Construido sempre por componentes — nunca new Date(string) — para o dia nao escorregar por fuso.
+lib.parseDataHora = texto => {
+  const t = String(texto == null ? "" : texto).trim();
+  if (!t) throw new Error("Informe uma data.");
+  let m;
+  if (/^\d{10}$/.test(t)) return new Date(+t * 1000);
+  if (/^\d{13}$/.test(t)) return new Date(+t);
+  let y, mo, d, h = 12, mi = 0, se = 0, off = null;
+  if ((m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?(Z|[+-]\d{2}:?\d{2})?$/.exec(t))) {
+    [y, mo, d] = [+m[1], +m[2], +m[3]];
+    if (m[4] !== undefined) { h = +m[4]; mi = +m[5]; se = m[6] ? +m[6] : 0; }
+    if (m[7]) off = m[7] === "Z" ? 0 : (m[7][0] === "-" ? -1 : 1) * (+m[7].slice(1, 3) * 60 + +m[7].slice(-2));
+  } else if ((m = /^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(t))) {
+    [d, mo, y] = [+m[1], +m[2], +m[3]];
+    if (m[4] !== undefined) { h = +m[4]; mi = +m[5]; se = m[6] ? +m[6] : 0; }
+  } else {
+    throw new Error("Não entendi “" + t + "”. Use 17/09/2026 14:30, 2026-09-17, ISO 8601 ou um timestamp.");
+  }
+  if (h > 23 || mi > 59 || se > 59) throw new Error("Hora fora de faixa: " + p2(h) + ":" + p2(mi) + ":" + p2(se));
+  if (off !== null) {
+    const base = new Date(Date.UTC(y, mo - 1, d, h, mi, se));
+    if (base.getUTCMonth() !== mo - 1 || base.getUTCDate() !== d) throw new Error("Data inexistente: " + t);
+    return new Date(base.getTime() - off * 60000);
+  }
+  const dt = new Date(y, mo - 1, d, h, mi, se, 0);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) throw new Error("Data inexistente: " + t);
+  return dt;
+};
+
+// Formata com molde: yyyy yy MMMM MMM MM M dd d EEEE EEE HH H hh h mm ss a. 'texto' e literal; '' e uma aspa.
+lib.formatarData = (d, molde) => {
+  const TOK = ["yyyy","yy","MMMM","MMM","MM","M","dd","d","EEEE","EEE","HH","H","hh","h","mm","ss","a"];
+  const h12 = d.getHours() % 12 || 12;
+  const val = {
+    yyyy: String(d.getFullYear()), yy: p2(d.getFullYear() % 100),
+    MMMM: MESES_PT[d.getMonth()], MMM: MESES_PT[d.getMonth()].slice(0, 3), MM: p2(d.getMonth() + 1), M: String(d.getMonth() + 1),
+    dd: p2(d.getDate()), d: String(d.getDate()),
+    EEEE: DIAS_PT[d.getDay()], EEE: DIAS_PT[d.getDay()].slice(0, 3),
+    HH: p2(d.getHours()), H: String(d.getHours()), hh: p2(h12), h: String(h12),
+    mm: p2(d.getMinutes()), ss: p2(d.getSeconds()), a: d.getHours() < 12 ? "AM" : "PM"
+  };
+  let out = "", i = 0;
+  const s = String(molde == null ? "" : molde);
+  while (i < s.length) {
+    if (s[i] === "'") {
+      if (s[i + 1] === "'") { out += "'"; i += 2; continue; }
+      i++; // dentro do literal: '' vira aspa, ' sozinha fecha
+      while (i < s.length) {
+        if (s[i] === "'") { if (s[i + 1] === "'") { out += "'"; i += 2; continue; } i++; break; }
+        out += s[i++];
+      }
+      continue;
+    }
+    const tok = TOK.find(k => s.startsWith(k, i));
+    if (tok) { out += val[tok]; i += tok.length; } else { out += s[i]; i++; }
+  }
+  return out;
+};
+
+// "agora", "há 5 minutos", "em 2 dias"... sempre a maior unidade que couber.
+lib.tempoRelativo = (d, agora = new Date()) => {
+  const dif = d.getTime() - agora.getTime(), abs = Math.abs(dif);
+  if (abs < 45000) return "agora";
+  const UN = [[60000, "minuto", "minutos", 45 * 60000], [3600000, "hora", "horas", 22 * 3600000],
+              [86400000, "dia", "dias", 26 * 86400000], [30 * 86400000, "mês", "meses", 320 * 86400000], [365 * 86400000, "ano", "anos", Infinity]];
+  const [ms, sing, plur] = UN.find(u => abs < u[3]);
+  const n = Math.max(1, Math.round(abs / ms));
+  return (dif < 0 ? "há " : "em ") + n + " " + (n === 1 ? sing : plur);
+};
+
+lib.semanaIso = d => {
+  const x = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dia = x.getUTCDay() || 7;
+  x.setUTCDate(x.getUTCDate() + 4 - dia);
+  const ano1 = new Date(Date.UTC(x.getUTCFullYear(), 0, 1));
+  return Math.ceil(((x - ano1) / DIA_MS + 1) / 7);
+};
+
+lib.formatosData = (d, agora = new Date()) => {
+  const f = m => lib.formatarData(d, m);
+  const offMin = -d.getTimezoneOffset(), sinal = offMin < 0 ? "-" : "+", oa = Math.abs(offMin);
+  const offIso = sinal + p2(Math.floor(oa / 60)) + ":" + p2(oa % 60), offRfc = sinal + p2(Math.floor(oa / 60)) + p2(oa % 60);
+  const utc = d.getUTCFullYear() + "-" + p2(d.getUTCMonth() + 1) + "-" + p2(d.getUTCDate()) + "T" + p2(d.getUTCHours()) + ":" + p2(d.getUTCMinutes()) + ":" + p2(d.getUTCSeconds()) + "Z";
+  const jan1 = new Date(d.getFullYear(), 0, 1, 12), meioDia = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12);
+  return [
+    { rotulo: "Brasil", valor: f("dd/MM/yyyy") },
+    { rotulo: "Brasil com hora", valor: f("dd/MM/yyyy HH:mm") },
+    { rotulo: "Por extenso", valor: f("EEEE, d 'de' MMMM 'de' yyyy") },
+    { rotulo: "Por extenso com hora", valor: f("d 'de' MMMM 'de' yyyy 'às' HH:mm") },
+    { rotulo: "ISO (data)", valor: f("yyyy-MM-dd") },
+    { rotulo: "ISO 8601 completo", valor: f("yyyy-MM-dd'T'HH:mm:ss") + offIso },
+    { rotulo: "UTC", valor: utc },
+    { rotulo: "Timestamp (segundos)", valor: String(Math.floor(d.getTime() / 1000)) },
+    { rotulo: "Timestamp (milissegundos)", valor: String(d.getTime()) },
+    { rotulo: "E-mail / HTTP (RFC 2822)", valor: DIAS_EN[d.getDay()] + ", " + f("d") + " " + MESES_EN[d.getMonth()] + " " + f("yyyy HH:mm:ss") + " " + offRfc },
+    { rotulo: "Semana do ano", valor: String(lib.semanaIso(d)) },
+    { rotulo: "Dia do ano", valor: String(Math.round((meioDia - jan1) / DIA_MS) + 1) },
+    { rotulo: "Relativo", valor: lib.tempoRelativo(d, agora) }
+  ];
 };
 
 /* ---------- pomodoro ---------- */
@@ -1285,6 +1402,81 @@ TESTES.push({ nome: "imcFaixaPeso e imc concordam nos limites da faixa", fn: () 
 }});
 
 /* ---------- render provisório do runner ---------- */
+TESTES.push({ nome: "parseDataHora aceita as formas comuns e ancora ao meio-dia sem hora", fn: () => {
+  const c = d => [d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()];
+  assertEq(c(lib.parseDataHora("2026-09-17")), [2026, 9, 17, 12, 0, 0]);
+  assertEq(c(lib.parseDataHora("17/09/2026")), [2026, 9, 17, 12, 0, 0]);
+  assertEq(c(lib.parseDataHora("17/09/2026 14:30")), [2026, 9, 17, 14, 30, 0]);
+  assertEq(c(lib.parseDataHora("2026-09-17T14:30:05")), [2026, 9, 17, 14, 30, 5]);
+  assertEq(c(lib.parseDataHora("2026-09-17 08:05")), [2026, 9, 17, 8, 5, 0]);
+  assertEq(c(lib.parseDataHora("  17/09/2026  ")), [2026, 9, 17, 12, 0, 0], "tolera espacos");
+  const ts = lib.parseDataHora("1789666200");
+  assertEq(ts.getTime(), 1789666200000, "timestamp em segundos");
+  assertEq(lib.parseDataHora("1789666200000").getTime(), 1789666200000, "timestamp em ms");
+}});
+TESTES.push({ nome: "parseDataHora com Z e offset cai no mesmo instante", fn: () => {
+  const a = lib.parseDataHora("2026-09-17T17:30:00Z"), b = lib.parseDataHora("2026-09-17T14:30:00-03:00"), cc = lib.parseDataHora("2026-09-17T19:30:00+02:00");
+  assertEq(a.getTime(), b.getTime()); assertEq(a.getTime(), cc.getTime());
+  assertEq(a.getTime(), Date.UTC(2026, 8, 17, 17, 30, 0));
+}});
+TESTES.push({ nome: "parseDataHora rejeita o que nao existe", fn: () => {
+  assertThrows(() => lib.parseDataHora("30/02/2026"), "30 de fevereiro");
+  assertThrows(() => lib.parseDataHora("2026-13-01"), "mes 13");
+  assertThrows(() => lib.parseDataHora("17/09/2026 25:00"), "hora 25");
+  assertThrows(() => lib.parseDataHora("17/09/2026 10:60"), "minuto 60");
+  assertThrows(() => lib.parseDataHora("ontem"), "texto solto");
+  assertThrows(() => lib.parseDataHora(""), "vazio");
+  assertThrows(() => lib.parseDataHora("1234567"), "timestamp curto demais");
+  assertThrows(() => lib.parseDataHora("2026-9-7"), "sem zero a esquerda");
+}});
+TESTES.push({ nome: "formatarData cobre os tokens, literais e aspas", fn: () => {
+  const d = new Date(2026, 8, 7, 9, 5, 3); // segunda-feira 07/09/2026 09:05:03
+  assertEq(lib.formatarData(d, "yyyy-MM-dd"), "2026-09-07");
+  assertEq(lib.formatarData(d, "d/M/yy"), "7/9/26");
+  assertEq(lib.formatarData(d, "EEEE, d 'de' MMMM 'de' yyyy"), "segunda-feira, 7 de setembro de 2026");
+  assertEq(lib.formatarData(d, "EEE MMM"), "seg set");
+  assertEq(lib.formatarData(d, "HH:mm:ss"), "09:05:03");
+  assertEq(lib.formatarData(d, "H'h'"), "9h");
+  assertEq(lib.formatarData(new Date(2026, 8, 7, 15, 0), "hh:mm a"), "03:00 PM");
+  assertEq(lib.formatarData(new Date(2026, 8, 7, 0, 0), "h a"), "12 AM");
+  assertEq(lib.formatarData(d, "'dia' d 'às' HH'h'"), "dia 7 às 09h");
+  assertEq(lib.formatarData(d, "'Ita''s' d"), "Ita's 7", "'' vira aspa");
+  assertEq(lib.formatarData(d, "zzz"), "zzz", "o que nao e token passa intacto");
+  assertEq(lib.formatarData(d, ""), "");
+}});
+TESTES.push({ nome: "tempoRelativo escolhe a unidade certa nos dois sentidos", fn: () => {
+  const ag = new Date(2026, 8, 17, 12, 0, 0);
+  const em = (ms) => new Date(ag.getTime() + ms);
+  assertEq(lib.tempoRelativo(em(10000), ag), "agora");
+  assertEq(lib.tempoRelativo(em(-10000), ag), "agora");
+  assertEq(lib.tempoRelativo(em(-60000), ag), "há 1 minuto");
+  assertEq(lib.tempoRelativo(em(5 * 60000), ag), "em 5 minutos");
+  assertEq(lib.tempoRelativo(em(-3 * 3600000), ag), "há 3 horas");
+  assertEq(lib.tempoRelativo(em(-3 * 86400000), ag), "há 3 dias");
+  assertEq(lib.tempoRelativo(em(45 * 86400000), ag), "em 2 meses");
+  assertEq(lib.tempoRelativo(em(-2 * 365 * 86400000), ag), "há 2 anos");
+  assertEq(lib.tempoRelativo(em(-366 * 86400000), ag), "há 1 ano");
+}});
+TESTES.push({ nome: "formatosData entrega o painel completo e coerente", fn: () => {
+  const d = new Date(2026, 8, 17, 14, 30, 0), ag = new Date(2026, 8, 20, 14, 30, 0);
+  const lista = lib.formatosData(d, ag), mapa = Object.fromEntries(lista.map(x => [x.rotulo, x.valor]));
+  assertEq(lista.length, 13);
+  assertTrue(lista.every(x => x.valor && x.valor.length), "nenhum valor vazio");
+  assertEq(mapa["Brasil"], "17/09/2026");
+  assertEq(mapa["Brasil com hora"], "17/09/2026 14:30");
+  assertEq(mapa["Por extenso"], "quinta-feira, 17 de setembro de 2026");
+  assertEq(mapa["ISO (data)"], "2026-09-17");
+  assertTrue(/^2026-09-17T14:30:00[+-]\d{2}:\d{2}$/.test(mapa["ISO 8601 completo"]), "iso com offset: " + mapa["ISO 8601 completo"]);
+  assertTrue(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(mapa["UTC"]), "utc: " + mapa["UTC"]);
+  assertEq(+mapa["Timestamp (milissegundos)"], +mapa["Timestamp (segundos)"] * 1000);
+  assertTrue(/^Thu, 17 Sep 2026 14:30:00 [+-]\d{4}$/.test(mapa["E-mail / HTTP (RFC 2822)"]), "rfc: " + mapa["E-mail / HTTP (RFC 2822)"]);
+  assertEq(mapa["Semana do ano"], "38");
+  assertEq(mapa["Dia do ano"], "260");
+  assertEq(mapa["Relativo"], "há 3 dias");
+  assertEq(lib.semanaIso(new Date(2026, 0, 1)), 1, "1/1/2026 e quinta: semana 1");
+  assertEq(lib.semanaIso(new Date(2024, 11, 30)), 1, "30/12/2024 pertence a semana 1 de 2025");
+  assertEq(lib.semanaIso(new Date(2027, 0, 1)), 53, "1/1/2027 e sexta: ainda semana 53 de 2026");
+}});
 TESTES.push({ nome: "formatarTempo", fn: () => {
   assertEq(lib.formatarTempo(1500), "25:00");
   assertEq(lib.formatarTempo(65), "01:05");
@@ -1942,6 +2134,48 @@ TOOLS.push({
       } catch (e) { s.set("Erro: " + e.message); }
     }), s);
     el.appendChild(ui.nota("O IMC é um indicador populacional e não considera composição corporal, idade ou sexo. Não substitui avaliação profissional."));
+  }
+});
+
+TOOLS.push({
+  id: "formatar-data", cat: "data", tipo: "nativa",
+  nome: "Formatar Data e Hora", desc: "Uma data em todos os formatos — Brasil, ISO, timestamp, por extenso — ou no seu molde",
+  tags: ["converter", "timestamp", "unix", "iso 8601", "por extenso", "epoch", "dia da semana", "formato", "semana do ano"],
+  render(el) {
+    const entrada = ui.campo("Data e hora", "text", { placeholder: "17/09/2026 14:30  ·  2026-09-17  ·  1789666200" });
+    const lista = document.createElement("div"); lista.className = "fmt-lista"; lista.hidden = true;
+    const erro = ui.nota(""); erro.hidden = true;
+    const molde = ui.campo("Molde personalizado", "text", { value: "dd/MM/yyyy 'às' HH:mm" });
+    const saidaMolde = ui.saida();
+    let data = null;
+
+    const aplicarMolde = () => { if (data) saidaMolde.set(lib.formatarData(data, molde.value)); };
+    const formatar = () => {
+      try {
+        data = lib.parseDataHora(entrada.value);
+        lista.innerHTML = lib.formatosData(data).map(x =>
+          '<div class="fmt-linha"><span class="fmt-rotulo">' + x.rotulo + '</span>' +
+          '<span class="fmt-valor"></span><button type="button" class="fmt-copiar">copiar</button></div>').join("");
+        const fmts = lib.formatosData(data);
+        lista.querySelectorAll(".fmt-linha").forEach((li, i) => {
+          li.querySelector(".fmt-valor").textContent = fmts[i].valor;
+          li.querySelector(".fmt-copiar").onclick = () => ui.copiar(fmts[i].valor);
+        });
+        lista.hidden = false; erro.hidden = true; aplicarMolde();
+      } catch (e) {
+        data = null; lista.hidden = true; saidaMolde.set("");
+        erro.textContent = e.message + " Formas aceitas: 17/09/2026, 17/09/2026 14:30, 2026-09-17, 2026-09-17T14:30, ISO com Z ou fuso, timestamp em segundos ou milissegundos.";
+        erro.hidden = false;
+      }
+    };
+    const agora = () => { entrada.value = lib.formatarData(new Date(), "dd/MM/yyyy HH:mm:ss"); formatar(); };
+    entrada.addEventListener("keydown", e => { if (e.key === "Enter") formatar(); });
+    molde.addEventListener("input", aplicarMolde);
+
+    ui.montar(el, entrada, ui.linha(ui.btn("Formatar", formatar), ui.btn("Agora", agora, "secundaria")), erro, lista,
+      ui.separador(), molde, saidaMolde,
+      ui.nota("Tokens do molde: yyyy ano · yy ano curto · MMMM mês por extenso · MMM mês curto · MM mês · d/dd dia · EEEE dia da semana · EEE curto · HH hora · hh hora 12h · a AM/PM · mm minuto · ss segundo. Texto entre aspas simples fica como está."));
+    el.querySelector(".nota:last-child").classList.add("fmt-tokens");
   }
 });
 

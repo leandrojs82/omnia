@@ -2,7 +2,7 @@
   <img src="marca/omnia-logo.svg" width="240" alt="OmnIA">
 </p>
 
-<p align="center"><strong>Canivete suíço digital</strong> — 26 ferramentas em um único arquivo HTML.<br>
+<p align="center"><strong>Canivete suíço digital</strong> — 27 ferramentas em um único arquivo HTML.<br>
 Abre com duplo clique. Sem instalar nada, sem servidor, sem conta. Nada é enviado a lugar nenhum.</p>
 
 ---
@@ -24,7 +24,7 @@ Tema escuro por padrão, claro no botão do canto. Favoritos e ferramentas recen
 | **Análise de Texto** | Contador de caracteres, palavras, linhas e parágrafos |
 | **Aleatório** | Sorteio · Gerador de senha · Números da Mega-Sena · Dado |
 | **Criptografia** | Código binário · Código Morse · Cifra de César |
-| **Data e Hora** | Contar dias entre datas · Idade exata · Dias úteis · Pomodoro com sons |
+| **Data e Hora** | Contar dias entre datas · Idade exata · Dias úteis · Formatar data e hora · Pomodoro com sons |
 | **Números e Matemática** | Regra de 3 · Porcentagem · Números romanos · Conversor de base |
 | **Desenvolvedor** | Gerador de CPF · Gerador de CNPJ · UUID v4 · Lorem Ipsum |
 | **Saúde** | Calculadora de IMC |
@@ -51,7 +51,7 @@ O arquivo carrega seu próprio conjunto de testes. Abra:
 index.html#/_testes
 ```
 
-Aparece o placar (hoje **76/76**). Os testes cobrem a lógica pura de cada ferramenta — os dígitos verificadores de CPF e CNPJ são conferidos contra 200 documentos gerados por execução, e a idade exata é validada por um teste de propriedade com 500 pares de datas aleatórias. A suíte fica verde também com o `localStorage` bloqueado.
+Aparece o placar (hoje **82/82**). Os testes cobrem a lógica pura de cada ferramenta — os dígitos verificadores de CPF e CNPJ são conferidos contra 200 documentos gerados por execução, e a idade exata é validada por um teste de propriedade com 500 pares de datas aleatórias. A suíte fica verde também com o `localStorage` bloqueado.
 
 ## Como adicionar uma ferramenta
 
