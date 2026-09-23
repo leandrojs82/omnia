@@ -185,6 +185,17 @@ header {
 .fmt-copiar:hover { color: var(--acento); }
 .fmt-tokens { font-family: var(--mono); font-size: 12px; }
 @media (max-width: 767px) { .fmt-linha { grid-template-columns: 1fr auto; } .fmt-valor { grid-column: 1 / -1; } }
+.arq-palpite { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--linha); }
+.arq-titulo { font-size: 17px; margin-bottom: 6px; }
+.arq-titulo strong { font-family: var(--mono); color: var(--acento); font-weight: 400; }
+.arq-sinais { font-size: 13px; color: var(--texto-fraco); line-height: 1.6; }
+.arq-alternativas { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; align-items: center; }
+.arq-alternativas > span { font-size: 12px; color: var(--texto-fraco); letter-spacing: 1px; text-transform: uppercase; }
+.arq-alt {
+  padding: 6px 12px; font: inherit; font-family: var(--mono); font-size: 13px; cursor: pointer;
+  background: var(--surface); color: var(--texto); border: 1px solid var(--borda); border-radius: 6px;
+}
+.arq-alt:hover { border-color: var(--acento); color: var(--acento); }
 .nota { color: var(--texto-fraco); font-size: 13px; line-height: 1.6; margin-top: 18px; max-width: 560px; }
 .separador { margin: 32px 0; border: 0; border-top: 1px solid var(--borda); }
 #toast {
@@ -2424,6 +2435,69 @@ TOOLS.push({
       ui.separador(), molde, saidaMolde,
       ui.nota("Tokens do molde: yyyy ano · yy ano curto · MMMM mês por extenso · MMM mês curto · MM mês · d/dd dia · EEEE dia da semana · EEE curto · HH hora · hh hora 12h · a AM/PM · mm minuto · ss segundo. Texto entre aspas simples fica como está."));
     el.querySelector(".nota:last-child").classList.add("fmt-tokens");
+  }
+});
+
+TOOLS.push({
+  id: "criar-arquivo", cat: "dev", tipo: "nativa",
+  nome: "Criar Arquivo", desc: "Reconhece o tipo do conteúdo colado e baixa com o nome e a extensão certos",
+  tags: ["download", "salvar", "baixar", "extensao", "docker-compose", "package.json", "yaml", "detectar tipo"],
+  render(el) {
+    const conteudo = ui.area("Conteúdo do arquivo", { placeholder: "Cole aqui o conteúdo — um docker-compose, um SQL, um JSON, o que for." });
+    const nome = ui.campo("Nome do arquivo", "text", { placeholder: "arquivo.txt" });
+    const palpite = document.createElement("div"); palpite.className = "arq-palpite"; palpite.hidden = true;
+    const btnBaixar = ui.btn("Baixar", () => baixar());
+    let candidatos = [], escolhido = null, nomeEditado = false;
+
+    nome.addEventListener("input", () => { nomeEditado = true; });
+
+    const pintar = () => {
+      if (!escolhido) { palpite.hidden = true; btnBaixar.disabled = true; return; }
+      const alternativas = candidatos.filter(c => c.id !== escolhido.id).slice(0, 3);
+      const mostrarAlt = alternativas.length && (lib.ambiguo(candidatos) || candidatos[0].id !== escolhido.id);
+      palpite.innerHTML =
+        '<div class="arq-titulo">Parece um <strong>' + escolhido.nome + '</strong></div>' +
+        '<div class="arq-sinais">Bateu: ' + escolhido.sinais.join(" · ") + '</div>' +
+        (alternativas.length ? '<div class="arq-alternativas"><span>' +
+          (mostrarAlt ? "Ou talvez" : "Outras opções") + '</span></div>' : '');
+      const caixa = palpite.querySelector(".arq-alternativas");
+      if (caixa) alternativas.forEach(c => {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "arq-alt"; b.textContent = c.nome;
+        b.onclick = () => { escolhido = c; if (!nomeEditado) nome.value = c.nome; pintar(); };
+        caixa.appendChild(b);
+      });
+      palpite.hidden = false;
+      btnBaixar.disabled = false;
+    };
+
+    let timer = null;
+    conteudo.addEventListener("input", () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!conteudo.value.trim()) { candidatos = []; escolhido = null; pintar(); return; }
+        candidatos = lib.detectarTipo(conteudo.value);
+        escolhido = candidatos[0];
+        if (!nomeEditado) nome.value = escolhido.nome;
+        pintar();
+      }, 250);
+    });
+
+    const baixar = () => {
+      if (!conteudo.value.trim()) { ui.toast("Cole algum conteúdo primeiro"); return; }
+      const limpo = lib.nomeSeguro(nome.value || (escolhido && escolhido.nome));
+      if (limpo !== nome.value) { nome.value = limpo; ui.toast("Nome ajustado para " + limpo); }
+      const blob = new Blob([conteudo.value], { type: (escolhido && escolhido.mime) || "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = limpo;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+
+    btnBaixar.disabled = true;
+    ui.montar(el, conteudo, palpite, nome, ui.linha(btnBaixar),
+      ui.nota("O reconhecimento é um palpite baseado nos sinais listados — o nome final é sempre seu. O conteúdo baixa exatamente como está aí em cima, sem nenhuma alteração."));
   }
 });
 
