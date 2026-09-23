@@ -1010,6 +1010,8 @@ const dataDos = d => ({
 
 // Os deslocamentos de bytes abaixo são fixados pelo formato ZIP — não mexer.
 lib.zip = (entradas, agora = new Date()) => {
+  if (entradas.length > 0xffff) throw new Error("zip: mais de 65535 arquivos não cabe no formato (campo de contagem é de 16 bits)");
+
   const cod = new TextEncoder();
   const { data, hora } = dataDos(agora);
   const locais = [], centrais = [];
@@ -1017,6 +1019,7 @@ lib.zip = (entradas, agora = new Date()) => {
 
   for (const e of entradas) {
     const nome = cod.encode(e.nome);
+    if (nome.length > 0xffff) throw new Error("zip: nome de arquivo muito longo em UTF-8 (campo de tamanho é de 16 bits): " + e.nome);
     const dados = cod.encode(e.conteudo == null ? "" : String(e.conteudo));
     const crc = lib.crc32(dados);
 
@@ -1920,7 +1923,7 @@ TESTES.push({ nome: "crc32 bate com os vetores conhecidos", fn: () => {
   assertEq(lib.crc32(b("123456789")), 0xCBF43926, "vetor padrão do CRC-32");
   assertEq(lib.crc32(b("")), 0, "vazio é zero");
   assertEq(lib.crc32(b("a")), 0xE8B7BE43);
-  assertTrue(lib.crc32(b("abc")) >= 0, "nunca negativo");
+  assertEq(lib.crc32(b("abc")), 0x352441C2, "vetor conhecido de abc");
 }});
 TESTES.push({ nome: "zip monta um arquivo com a estrutura certa", fn: () => {
   const data = new Date(2026, 8, 22, 14, 30, 0);
@@ -1941,6 +1944,13 @@ TESTES.push({ nome: "zip monta um arquivo com a estrutura certa", fn: () => {
   assertTrue(texto.includes("docker-compose.yml"), "nome do primeiro arquivo");
   assertTrue(texto.includes(".env"), "nome do segundo arquivo");
   assertTrue(texto.includes("services:"), "conteúdo do primeiro arquivo");
+
+  // nome com acento: o campo de tamanho conta bytes UTF-8, não caracteres —
+  // "relatório.txt" tem 14 bytes e 13 caracteres; se contasse caracteres, tudo depois desalinharia.
+  const acentuado = lib.zip([{ nome: "relatório.txt", conteudo: "x" }], data);
+  const va = new DataView(acentuado.buffer);
+  assertEq("relatório.txt".length, 13, "13 caracteres");
+  assertEq(va.getUint16(26, true), 14, "tamanho do nome no cabeçalho local conta bytes UTF-8, não caracteres");
 }});
 TESTES.push({ nome: "zip grava tamanho e crc corretos por entrada", fn: () => {
   const bytes = lib.zip([{ nome: "a.txt", conteudo: "123456789" }], new Date(2026, 0, 1, 0, 0, 0));
@@ -1988,7 +1998,16 @@ TESTES.push({ nome: "zip grava o diretorio central com os deslocamentos corretos
   assertEq(v.getUint32(c2 + 16, true), 0, "crc do diretório central bate com o do cabeçalho local (entrada 2, vazio)");
 }});
 
-TESTES.push({ nome: "nomesDeLinhas limpa, ordena e aponta repetidos", fn: () => {
+TESTES.push({ nome: "zip recusa o que o formato não aguenta, em vez de corromper", fn: () => {
+  // campo de contagem é de 16 bits: acima de 65535 entradas o valor estoura e o zip fica ilegível em silêncio.
+  const muitas = { length: 0x10000 };
+  assertThrows(() => lib.zip(muitas), "mais de 65535 entradas deve recusar, não estourar o campo de 16 bits");
+  // campo de tamanho do nome também é de 16 bits.
+  const nomeGigante = "a".repeat(0x10000) + ".txt";
+  assertThrows(() => lib.zip([{ nome: nomeGigante, conteudo: "" }]), "nome maior que 65535 bytes em UTF-8 deve recusar");
+}});
+
+TESTES.push({ nome: "nomesDeLinhas limpa, preserva ordem e aponta repetidos", fn: () => {
   const r = lib.nomesDeLinhas("docker-compose.yml\n.env\n.gitignore");
   assertEq(r.nomes, ["docker-compose.yml", ".env", ".gitignore"], "ordem preservada");
   assertEq(r.repetidos, []);
@@ -2680,7 +2699,13 @@ TOOLS.push({
     const btnBaixar = ui.btn("Baixar", () => baixar());
     let candidatos = [], escolhido = null, nomeEditado = false;
 
-    nomes.addEventListener("input", () => { nomeEditado = nomes.value.trim().length > 0; pintar(); });
+    nomes.addEventListener("input", () => {
+      nomeEditado = nomes.value.trim().length > 0;
+      // Campo esvaziado com um reconhecimento em mãos: devolve a sugestão, senão o painel
+      // fica afirmando um palpite que o campo de nomes já não mostra mais.
+      if (!nomeEditado && escolhido) nomes.value = escolhido.nome;
+      pintar();
+    });
 
     const lidos = () => lib.nomesDeLinhas(nomes.value);
 
@@ -2694,6 +2719,13 @@ TOOLS.push({
         varios ? "Conteúdo (indisponível — vários arquivos saem vazios)" : "Conteúdo";
 
       const partes = [];
+      // A limpeza do nomeSeguro nunca deve ser silenciosa: nenhum resultado falso.
+      const ajustes = [], vistosAjuste = new Set();
+      nomes.value.split("\n").map(l => l.trim()).filter(Boolean).forEach(cru => {
+        const limpo = lib.nomeSeguro(cru);
+        if (limpo !== cru && !vistosAjuste.has(cru)) { vistosAjuste.add(cru); ajustes.push(cru + " → " + limpo); }
+      });
+      if (ajustes.length) partes.push((ajustes.length > 1 ? "Nomes ajustados: " : "Nome ajustado: ") + ajustes.join(", "));
       if (repetidos.length) partes.push("Nome repetido, vai entrar uma vez só: " + repetidos.join(", "));
       if (lista.length === 1 && !conteudo.value) partes.push("Sem conteúdo — vai baixar um arquivo vazio.");
       aviso.textContent = partes.join(" ");
@@ -2727,6 +2759,10 @@ TOOLS.push({
     let timer = null;
     conteudo.addEventListener("input", () => {
       clearTimeout(timer);
+      // A verdade do aviso de "vazio" não espera debounce — atualiza na hora.
+      pintar();
+      // O reconhecimento mostrado ficou velho; o botão não pode oferecer um nome que já não vale.
+      btnBaixar.disabled = true;
       timer = setTimeout(() => {
         if (!conteudo.value.trim()) { candidatos = []; escolhido = null; pintar(); return; }
         candidatos = lib.detectarTipo(conteudo.value);
