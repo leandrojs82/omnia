@@ -198,6 +198,9 @@ header {
   background: var(--surface); color: var(--texto); border: 1px solid var(--borda); border-radius: 6px;
 }
 .arq-alt:hover { border-color: var(--acento); color: var(--acento); }
+.arq-aviso { margin-top: 8px; font-size: 13px; color: var(--acento); }
+.campo textarea.arq-nomes { min-height: 90px; }
+.campo textarea:disabled { opacity: .45; cursor: default; }
 .nota { color: var(--texto-fraco); font-size: 13px; line-height: 1.6; margin-top: 18px; max-width: 560px; }
 .separador { margin: 32px 0; border: 0; border-top: 1px solid var(--borda); }
 #toast {
@@ -2666,21 +2669,44 @@ TOOLS.push({
 
 TOOLS.push({
   id: "criar-arquivo", cat: "dev", tipo: "nativa",
-  nome: "Criar Arquivo", desc: "Reconhece o tipo do conteúdo colado e baixa com o nome e a extensão certos",
-  tags: ["download", "salvar", "baixar", "extensao", "docker-compose", "package.json", "yaml", "detectar tipo"],
+  nome: "Criar Arquivo", desc: "Digite os nomes e baixe os arquivos — um direto, vários num zip",
+  tags: ["download", "salvar", "baixar", "extensao", "docker-compose", "package.json", "yaml", "detectar tipo", "zip", "varios arquivos", "arquivo vazio"],
   render(el) {
-    const conteudo = ui.area("Conteúdo do arquivo", { placeholder: "Cole aqui o conteúdo — um docker-compose, um SQL, um JSON, o que for." });
-    const nome = ui.campo("Nome do arquivo", "text", { placeholder: "arquivo.txt" });
+    const nomes = ui.area("Nomes dos arquivos", { placeholder: "Um por linha:\ndocker-compose.yml\n.env\n.gitignore" });
+    nomes.classList.add("arq-nomes");
+    const conteudo = ui.area("Conteúdo", { placeholder: "Opcional. Cole aqui o conteúdo do arquivo." });
     const palpite = document.createElement("div"); palpite.className = "arq-palpite"; palpite.hidden = true;
+    const aviso = document.createElement("div"); aviso.className = "arq-aviso"; aviso.hidden = true;
     const btnBaixar = ui.btn("Baixar", () => baixar());
     let candidatos = [], escolhido = null, nomeEditado = false;
 
-    nome.addEventListener("input", () => { nomeEditado = true; });
+    nomes.addEventListener("input", () => { nomeEditado = nomes.value.trim().length > 0; pintar(); });
+
+    const lidos = () => lib.nomesDeLinhas(nomes.value);
 
     const pintar = () => {
-      if (!escolhido) { palpite.hidden = true; btnBaixar.disabled = true; return; }
+      const { nomes: lista, repetidos } = lidos();
+      const varios = lista.length > 1;
+
+      // Conteúdo só faz sentido com um arquivo: com vários, não há para qual deles ele iria.
+      conteudo.disabled = varios;
+      conteudo.wrapper.querySelector("label").textContent =
+        varios ? "Conteúdo (indisponível — vários arquivos saem vazios)" : "Conteúdo";
+
+      const partes = [];
+      if (repetidos.length) partes.push("Nome repetido, vai entrar uma vez só: " + repetidos.join(", "));
+      if (lista.length === 1 && !conteudo.value) partes.push("Sem conteúdo — vai baixar um arquivo vazio.");
+      aviso.textContent = partes.join(" ");
+      aviso.hidden = !partes.length;
+
+      btnBaixar.textContent = varios
+        ? "Baixar .zip com " + lista.length + " arquivos"
+        : (lista.length === 1 ? "Baixar " + lista[0] : "Baixar");
+      btnBaixar.disabled = lista.length === 0;
+
+      // O painel de reconhecimento só aparece quando há conteúdo para reconhecer.
+      if (!escolhido || varios) { palpite.hidden = true; return; }
       const alternativas = candidatos.filter(c => c.id !== escolhido.id).slice(0, 3);
-      // Só o texto do cabeçalho muda com o empate — as alternativas sempre aparecem do mesmo jeito.
       const rotuloEmpate = alternativas.length && (lib.ambiguo(candidatos) || candidatos[0].id !== escolhido.id);
       palpite.innerHTML =
         '<div class="arq-titulo">Parece um <strong>' + escolhido.nome + '</strong></div>' +
@@ -2691,51 +2717,55 @@ TOOLS.push({
       if (caixa) alternativas.forEach(c => {
         const b = document.createElement("button");
         b.type = "button"; b.className = "arq-alt"; b.textContent = c.nome;
-        // Clicar numa alternativa é escolha deliberada: escreve o nome direto, sem olhar nomeEditado.
-        // nomeEditado continua intocado para que a próxima detecção automática ainda respeite um nome digitado.
-        b.onclick = () => { escolhido = c; nome.value = c.nome; pintar(); };
+        // Clicar numa alternativa é escolha deliberada: escreve o nome direto.
+        b.onclick = () => { escolhido = c; nomes.value = c.nome; nomeEditado = true; pintar(); };
         caixa.appendChild(b);
       });
       palpite.hidden = false;
-      btnBaixar.disabled = false;
     };
 
     let timer = null;
     conteudo.addEventListener("input", () => {
       clearTimeout(timer);
-      btnBaixar.disabled = true;
       timer = setTimeout(() => {
         if (!conteudo.value.trim()) { candidatos = []; escolhido = null; pintar(); return; }
         candidatos = lib.detectarTipo(conteudo.value);
         escolhido = candidatos[0];
-        if (!nomeEditado) nome.value = escolhido.nome;
+        // O reconhecimento preenche o campo de nomes, mas nunca por cima do que o usuário digitou.
+        if (!nomeEditado) nomes.value = escolhido.nome;
         pintar();
       }, 250);
     });
 
+    const entregar = (bytes, mime, nomeArquivo) => {
+      const blob = new Blob([bytes], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = nomeArquivo;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+
     const baixar = () => {
-      // Sem guarda para conteúdo vazio aqui: o botão fica desabilitado (e agora parece desabilitado)
-      // sempre que não há conteúdo, então este caminho nunca seria alcançado por um clique real.
-      const limpo = lib.nomeSeguro(nome.value || (escolhido && escolhido.nome));
-      const ajustou = limpo !== nome.value;
-      if (ajustou) nome.value = limpo;
+      const lista = lidos().nomes;
+      if (!lista.length) return;
       try {
-        const blob = new Blob([conteudo.value], { type: (escolhido && escolhido.mime) || "text/plain" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url; a.download = limpo;
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-        // As duas mensagens não podem se atropelar: o toast é único, então elas viajam juntas quando as duas se aplicam.
-        ui.toast(ajustou ? "Nome ajustado para " + limpo + " — baixando" : "Baixando " + limpo);
+        if (lista.length === 1) {
+          entregar(conteudo.value, (escolhido && escolhido.mime) || "text/plain", lista[0]);
+          ui.toast("Baixando " + lista[0]);
+        } else {
+          const bytes = lib.zip(lista.map(n => ({ nome: n, conteudo: "" })));
+          entregar(bytes, "application/zip", "arquivos.zip");
+          ui.toast("Baixando arquivos.zip com " + lista.length + " arquivos");
+        }
       } catch (e) {
         ui.toast("Não foi possível baixar — copie o conteúdo manualmente");
       }
     };
 
-    btnBaixar.disabled = true;
-    ui.montar(el, conteudo, palpite, nome, ui.linha(btnBaixar),
-      ui.nota("O reconhecimento é um palpite baseado nos sinais listados — o nome final é sempre seu. O conteúdo baixa exatamente como está aí em cima, sem nenhuma alteração — exceto quebras de linha: o navegador sempre grava só LF, mesmo que o original tivesse CRLF."));
+    ui.montar(el, nomes, conteudo, palpite, aviso, ui.linha(btnBaixar),
+      ui.nota("Um nome baixa o arquivo direto; dois ou mais vêm num .zip, vazios. O reconhecimento preenche o campo de nomes quando ele está vazio — o nome final é sempre seu. O conteúdo baixa exatamente como está, exceto quebras de linha: o navegador sempre grava só LF, mesmo que o original tivesse CRLF."));
+    pintar();
   }
 });
 
