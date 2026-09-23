@@ -818,6 +818,111 @@ lib.formatosData = (d, agora = new Date()) => {
   ];
 };
 
+/* ---------- criar arquivo: reconhecer tipo pelo conteúdo ---------- */
+// Cada tipo soma os pesos dos sinais que batem. Maior soma absoluta vence.
+// Sinais específicos (services:, "dependencies") pesam mais que genéricos (key:).
+const TIPOS = [
+  { id: "docker-compose", nome: "docker-compose.yml", ext: ".yml", mime: "text/yaml", sinais: [
+    { re: /^services:\s*$/m, peso: 6, label: "services: no início de linha" },
+    { re: /^\s+image:\s*\S/m, peso: 4, label: "image:" },
+    { re: /^\s+ports:\s*$/m, peso: 2, label: "ports:" },
+    { re: /^\s+volumes:\s*$/m, peso: 2, label: "volumes:" },
+    { re: /^\s+environment:\s*$/m, peso: 2, label: "environment:" }
+  ]},
+  { id: "dockerfile", nome: "Dockerfile", ext: "", mime: "text/plain", sinais: [
+    { re: /^FROM\s+\S+/m, peso: 6, label: "FROM" },
+    { re: /^RUN\s+\S/m, peso: 3, label: "RUN" },
+    { re: /^(CMD|ENTRYPOINT)\s/m, peso: 3, label: "CMD ou ENTRYPOINT" },
+    { re: /^(COPY|ADD)\s/m, peso: 2, label: "COPY ou ADD" },
+    { re: /^WORKDIR\s/m, peso: 2, label: "WORKDIR" }
+  ]},
+  { id: "package-json", nome: "package.json", ext: ".json", mime: "application/json", sinais: [
+    { re: /"(dependencies|devDependencies)"\s*:/, peso: 6, label: '"dependencies"' },
+    { re: /"scripts"\s*:/, peso: 4, label: '"scripts"' },
+    { re: /"name"\s*:/, peso: 2, label: '"name"' },
+    { re: /"version"\s*:/, peso: 2, label: '"version"' }
+  ]},
+  { id: "tsconfig", nome: "tsconfig.json", ext: ".json", mime: "application/json", sinais: [
+    { re: /"compilerOptions"\s*:/, peso: 8, label: '"compilerOptions"' },
+    { re: /"(target|module|strict|outDir)"\s*:/, peso: 3, label: "opção de compilador" }
+  ]},
+  { id: "env", nome: ".env", ext: "", mime: "text/plain", sinais: [
+    { re: /^[A-Z][A-Z0-9_]*=/m, peso: 5, label: "VARIAVEL=valor em maiúsculas" },
+    { re: /^(DB_|DATABASE_|API_|APP_|SECRET|TOKEN|PORT|NODE_ENV)/m, peso: 4, label: "nome típico de variável de ambiente" }
+  ]},
+  { id: "sql", nome: "consulta.sql", ext: ".sql", mime: "application/sql", sinais: [
+    { re: /\b(CREATE\s+(TABLE|INDEX|VIEW)|ALTER\s+TABLE)\b/i, peso: 6, label: "CREATE ou ALTER TABLE" },
+    { re: /\bSELECT\b[\s\S]*\bFROM\b/i, peso: 5, label: "SELECT ... FROM" },
+    { re: /\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b/i, peso: 5, label: "INSERT, UPDATE ou DELETE" },
+    { re: /\b(WHERE|JOIN|GROUP\s+BY|ORDER\s+BY)\b/i, peso: 2, label: "cláusula SQL" }
+  ]},
+  { id: "json", nome: "dados.json", ext: ".json", mime: "application/json", sinais: [
+    { re: /^\s*[{[][\s\S]*[}\]]\s*$/, peso: 5, label: "abre e fecha com chave ou colchete" },
+    { re: /"[^"]+"\s*:\s*("|\d|true|false|null|\{|\[)/, peso: 4, label: '"chave": valor' }
+  ]},
+  { id: "yaml", nome: "config.yaml", ext: ".yaml", mime: "text/yaml", sinais: [
+    { re: /^[a-zA-Z_][\w-]*:\s*$/m, peso: 3, label: "chave: em linha própria" },
+    { re: /^\s*-\s+\S/m, peso: 3, label: "- item de lista" },
+    { re: /^[a-zA-Z_][\w-]*:\s+\S/m, peso: 2, label: "chave: valor" },
+    { re: /^---\s*$/m, peso: 2, label: "--- separador de documento" }
+  ]},
+  { id: "xml", nome: "documento.xml", ext: ".xml", mime: "application/xml", sinais: [
+    { re: /^\s*<\?xml\s/, peso: 7, label: "declaração <?xml" },
+    { re: /<([a-zA-Z][\w:-]*)[^>]*>[\s\S]*<\/\1>/, peso: 4, label: "tag que abre e fecha" }
+  ]},
+  { id: "html", nome: "pagina.html", ext: ".html", mime: "text/html", sinais: [
+    { re: /<!doctype\s+html/i, peso: 7, label: "<!doctype html>" },
+    { re: /<html[\s>]/i, peso: 5, label: "<html>" },
+    { re: /<(body|head|div|p|span|a|script|style)[\s>]/i, peso: 3, label: "tag de HTML" }
+  ]},
+  { id: "css", nome: "estilo.css", ext: ".css", mime: "text/css", sinais: [
+    { re: /[.#]?[\w-]+\s*\{[^}]*:[^}]*;[^}]*\}/, peso: 5, label: "seletor { propriedade: valor; }" },
+    { re: /^\s*(@media|@import|@font-face|:root)/m, peso: 4, label: "regra @ ou :root" },
+    { re: /(color|margin|padding|display|font-size)\s*:/, peso: 3, label: "propriedade CSS" }
+  ]},
+  { id: "js", nome: "script.js", ext: ".js", mime: "text/javascript", sinais: [
+    { re: /\b(const|let)\s+\w+\s*=/, peso: 4, label: "const ou let" },
+    { re: /=>\s*[{(\w]/, peso: 3, label: "arrow function" },
+    { re: /\b(function\s+\w+\s*\(|require\s*\(|module\.exports)/, peso: 4, label: "function, require ou module.exports" },
+    { re: /^\s*(import|export)\s/m, peso: 3, label: "import ou export" }
+  ]},
+  { id: "py", nome: "script.py", ext: ".py", mime: "text/x-python", sinais: [
+    { re: /^\s*def\s+\w+\s*\(.*\)\s*:/m, peso: 6, label: "def função():" },
+    { re: /^if\s+__name__\s*==/m, peso: 5, label: 'if __name__ ==' },
+    { re: /^\s*(from\s+[\w.]+\s+)?import\s+\w/m, peso: 3, label: "import" },
+    { re: /^\s*(class\s+\w+|print\s*\()/m, peso: 2, label: "class ou print(" }
+  ]},
+  { id: "sh", nome: "script.sh", ext: ".sh", mime: "application/x-sh", sinais: [
+    { re: /^#!\s*\/(usr\/)?bin\/(ba|z|k)?sh/, peso: 8, label: "shebang #!/bin/bash" },
+    { re: /^\s*(echo|cd|mkdir|rm|cp|mv|export|chmod)\s/m, peso: 2, label: "comando de shell" },
+    { re: /\$\{?\w+\}?/, peso: 1, label: "$variável" }
+  ]},
+  { id: "md", nome: "documento.md", ext: ".md", mime: "text/markdown", sinais: [
+    { re: /^#{1,6}\s+\S/m, peso: 5, label: "# título" },
+    { re: /^```/m, peso: 4, label: "``` bloco de código" },
+    { re: /\*\*[^*\n]+\*\*/, peso: 2, label: "**negrito**" },
+    { re: /^\s*[-*]\s+\S/m, peso: 2, label: "- item de lista" },
+    { re: /\[[^\]\n]+\]\([^)\n]+\)/, peso: 3, label: "[link](url)" }
+  ]},
+  { id: "csv", nome: "dados.csv", ext: ".csv", mime: "text/csv", sinais: [
+    { re: /^[^,\n]+(,[^,\n]*){2,}\r?\n[^,\n]+(,[^,\n]*){2,}/, peso: 6, label: "linhas com o mesmo número de vírgulas" },
+    { re: /^[^;\n]+(;[^;\n]*){2,}\r?\n[^;\n]+(;[^;\n]*){2,}/, peso: 6, label: "linhas separadas por ponto e vírgula" }
+  ]},
+  { id: "ini", nome: "config.ini", ext: ".ini", mime: "text/plain", sinais: [
+    { re: /^\[[\w.\s-]+\]\s*$/m, peso: 6, label: "[seção]" },
+    { re: /^\s*[\w.-]+\s*=\s*\S/m, peso: 3, label: "chave = valor" },
+    { re: /^\s*[;#]\s*\S/m, peso: 1, label: "comentário com ; ou #" }
+  ]},
+  { id: "gitignore", nome: ".gitignore", ext: "", mime: "text/plain", sinais: [
+    { re: /^(node_modules|__pycache__|\.venv|dist|build|target)\/?\s*$/m, peso: 6, label: "pasta ignorada conhecida" },
+    { re: /^\*\.\w+\s*$/m, peso: 4, label: "*.extensão" },
+    { re: /^!\S/m, peso: 3, label: "! exceção" }
+  ]}
+];
+
+// Piso: quando nada bate, ainda existe uma saída honesta.
+const TIPO_TXT = { id: "txt", nome: "arquivo.txt", ext: ".txt", mime: "text/plain", sinais: [] };
+
 /* ---------- pomodoro ---------- */
 lib.formatarTempo = seg => {
   seg = Math.max(0, Math.floor(seg));
@@ -1519,6 +1624,25 @@ TESTES.push({ nome: "pomodoroProximo alterna foco/pausa e faz pausa longa a cada
   assertEq(e, { fase: "foco", ciclos: 4, segundos: 1500 });
   e = lib.pomodoroProximo("foco", 4, cfg);
   assertEq(e.fase, "curta", "5o ciclo volta a pausa curta");
+}});
+
+TESTES.push({ nome: "tabela TIPOS está íntegra", fn: () => {
+  const vistos = new Set();
+  for (const t of TIPOS) {
+    assertTrue(!vistos.has(t.id), "id repetido: " + t.id); vistos.add(t.id);
+    assertTrue(typeof t.nome === "string" && t.nome.length > 0, t.id + " precisa de nome");
+    assertTrue(/^\.[a-z0-9]+$/.test(t.ext) || t.ext === "", t.id + " extensão inválida: " + t.ext);
+    assertTrue(typeof t.mime === "string" && t.mime.includes("/"), t.id + " precisa de mime");
+    assertTrue(Array.isArray(t.sinais) && t.sinais.length > 0, t.id + " precisa de pelo menos um sinal");
+    for (const s of t.sinais) {
+      assertTrue(s.re instanceof RegExp, t.id + ": sinal sem regex");
+      assertTrue(s.peso > 0, t.id + ": peso tem que ser positivo");
+      assertTrue(typeof s.label === "string" && s.label.length > 0, t.id + ": sinal sem label legível");
+    }
+  }
+  assertEq(TIPOS.length, 18, "os 18 tipos do spec");
+  assertEq(TIPO_TXT.ext, ".txt");
+  assertTrue(!vistos.has(TIPO_TXT.id), "txt é fallback, não entra em TIPOS");
 }});
 
 function renderTestes(el) {
