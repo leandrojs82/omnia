@@ -1934,6 +1934,37 @@ TESTES.push({ nome: "zip grava tamanho e crc corretos por entrada", fn: () => {
   assertEq(vv.getUint32(14, true), 0, "crc de vazio é zero");
   assertEq(vv.getUint32(22, true), 0, "tamanho de vazio é zero");
 }});
+TESTES.push({ nome: "zip grava o diretorio central com os deslocamentos corretos", fn: () => {
+  const bytes = lib.zip([
+    { nome: "a.txt", conteudo: "123456789" },
+    { nome: "b.txt", conteudo: "" }
+  ], new Date(2026, 0, 1));
+  const v = new DataView(bytes.buffer);
+
+  // registro de fim: ultimos 22 bytes
+  const fimOffset = bytes.length - 22;
+  const inicioCentral = v.getUint32(fimOffset + 16, true);
+
+  // primeiro cabeçalho central
+  const c1 = inicioCentral;
+  assertEq(v.getUint32(c1, true), 0x02014b50, "assinatura do primeiro cabeçalho central");
+  assertEq(v.getUint32(c1 + 42, true), 0, "primeiro cabeçalho local está no início do arquivo");
+  assertEq(v.getUint32(c1 + 16, true), 0xCBF43926, "crc do diretório central bate com o do cabeçalho local (entrada 1)");
+
+  // segundo cabeçalho central: fica logo após o primeiro (46 bytes fixos + nome)
+  const nome1Len = v.getUint16(c1 + 28, true);
+  const c2 = c1 + 46 + nome1Len;
+  assertEq(v.getUint32(c2, true), 0x02014b50, "assinatura do segundo cabeçalho central");
+
+  // deslocamento esperado calculado a partir dos tamanhos conhecidos, não das variáveis internas
+  const deslocamentoEsperado = 30 + "a.txt".length + "123456789".length;
+  const deslocamentoLido = v.getUint32(c2 + 42, true);
+  assertEq(deslocamentoLido, deslocamentoEsperado, "segundo cabeçalho local começa logo após o primeiro");
+
+  // o ponteiro realmente aponta para um cabeçalho local válido
+  assertEq(v.getUint32(deslocamentoLido, true), 0x04034b50, "cabeçalho local apontado pelo diretório central tem a assinatura certa");
+  assertEq(v.getUint32(c2 + 16, true), 0, "crc do diretório central bate com o do cabeçalho local (entrada 2, vazio)");
+}});
 
 function renderTestes(el) {
   const r = rodarTestes();
