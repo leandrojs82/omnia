@@ -982,6 +982,95 @@ lib.nomeSeguro = nome => {
   return n;
 };
 
+/* ---------- zip (método store, sem compressão) ---------- */
+const TABELA_CRC = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+lib.crc32 = bytes => {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = TABELA_CRC[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+
+// Data e hora no formato DOS: 7 bits de ano desde 1980, e os segundos em passos de 2.
+const dataDos = d => ({
+  data: ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate(),
+  hora: (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1)
+});
+
+// Os deslocamentos de bytes abaixo são fixados pelo formato ZIP — não mexer.
+lib.zip = (entradas, agora = new Date()) => {
+  const cod = new TextEncoder();
+  const { data, hora } = dataDos(agora);
+  const locais = [], centrais = [];
+  let deslocamento = 0;
+
+  for (const e of entradas) {
+    const nome = cod.encode(e.nome);
+    const dados = cod.encode(e.conteudo == null ? "" : String(e.conteudo));
+    const crc = lib.crc32(dados);
+
+    const local = new Uint8Array(30 + nome.length + dados.length);
+    const vl = new DataView(local.buffer);
+    vl.setUint32(0, 0x04034b50, true);    // assinatura PK\x03\x04
+    vl.setUint16(4, 20, true);            // versão mínima
+    vl.setUint16(6, 0x0800, true);        // flag: nome em UTF-8
+    vl.setUint16(8, 0, true);             // método 0 = store
+    vl.setUint16(10, hora, true);
+    vl.setUint16(12, data, true);
+    vl.setUint32(14, crc, true);
+    vl.setUint32(18, dados.length, true); // tamanho comprimido
+    vl.setUint32(22, dados.length, true); // tamanho original
+    vl.setUint16(26, nome.length, true);
+    vl.setUint16(28, 0, true);            // sem campo extra
+    local.set(nome, 30);
+    local.set(dados, 30 + nome.length);
+    locais.push(local);
+
+    const central = new Uint8Array(46 + nome.length);
+    const vc = new DataView(central.buffer);
+    vc.setUint32(0, 0x02014b50, true);    // assinatura PK\x01\x02
+    vc.setUint16(4, 20, true);            // versão de quem criou
+    vc.setUint16(6, 20, true);            // versão mínima
+    vc.setUint16(8, 0x0800, true);
+    vc.setUint16(10, 0, true);
+    vc.setUint16(12, hora, true);
+    vc.setUint16(14, data, true);
+    vc.setUint32(16, crc, true);
+    vc.setUint32(20, dados.length, true);
+    vc.setUint32(24, dados.length, true);
+    vc.setUint16(28, nome.length, true);
+    vc.setUint32(42, deslocamento, true); // onde começa o cabeçalho local
+    central.set(nome, 46);
+    centrais.push(central);
+
+    deslocamento += local.length;
+  }
+
+  const tamCentral = centrais.reduce((s, c) => s + c.length, 0);
+  const fim = new Uint8Array(22);
+  const vf = new DataView(fim.buffer);
+  vf.setUint32(0, 0x06054b50, true);      // assinatura PK\x05\x06
+  vf.setUint16(8, entradas.length, true);
+  vf.setUint16(10, entradas.length, true);
+  vf.setUint32(12, tamCentral, true);
+  vf.setUint32(16, deslocamento, true);
+
+  const saida = new Uint8Array(deslocamento + tamCentral + 22);
+  let p = 0;
+  for (const l of locais) { saida.set(l, p); p += l.length; }
+  for (const c of centrais) { saida.set(c, p); p += c.length; }
+  saida.set(fim, p);
+  return saida;
+};
+
 /* ---------- pomodoro ---------- */
 lib.formatarTempo = seg => {
   seg = Math.max(0, Math.floor(seg));
@@ -1803,6 +1892,47 @@ TESTES.push({ nome: "fragmento de HTML ganha do XML genérico", fn: () => {
 TESTES.push({ nome: "CSV com linha em branco antes do cabeçalho", fn: () => {
   assertEq(lib.detectarTipo("\nnome,idade,cidade\nAna,34,Curitiba\nBruno,28,Recife\n")[0].id, "csv");
   assertEq(lib.detectarTipo("nome,idade,cidade\nAna,34,Curitiba\nBruno,28,Recife\n")[0].id, "csv", "sem linha em branco não regride");
+}});
+TESTES.push({ nome: "crc32 bate com os vetores conhecidos", fn: () => {
+  const b = s => new TextEncoder().encode(s);
+  assertEq(lib.crc32(b("123456789")), 0xCBF43926, "vetor padrão do CRC-32");
+  assertEq(lib.crc32(b("")), 0, "vazio é zero");
+  assertEq(lib.crc32(b("a")), 0xE8B7BE43);
+  assertTrue(lib.crc32(b("abc")) >= 0, "nunca negativo");
+}});
+TESTES.push({ nome: "zip monta um arquivo com a estrutura certa", fn: () => {
+  const data = new Date(2026, 8, 22, 14, 30, 0);
+  const bytes = lib.zip([
+    { nome: "docker-compose.yml", conteudo: "services:\n" },
+    { nome: ".env", conteudo: "" }
+  ], data);
+  assertTrue(bytes instanceof Uint8Array, "devolve bytes");
+  const v = new DataView(bytes.buffer);
+  assertEq(v.getUint32(0, true), 0x04034b50, "assinatura PK\\x03\\x04 no início");
+  // registro de fim: ultimos 22 bytes
+  const fim = bytes.length - 22;
+  assertEq(v.getUint32(fim, true), 0x06054b50, "assinatura do registro de fim");
+  assertEq(v.getUint16(fim + 8, true), 2, "duas entradas no diretório central");
+  assertEq(v.getUint16(fim + 10, true), 2, "duas entradas no total");
+  // o nome de cada arquivo aparece legivel nos bytes
+  const texto = new TextDecoder().decode(bytes);
+  assertTrue(texto.includes("docker-compose.yml"), "nome do primeiro arquivo");
+  assertTrue(texto.includes(".env"), "nome do segundo arquivo");
+  assertTrue(texto.includes("services:"), "conteúdo do primeiro arquivo");
+}});
+TESTES.push({ nome: "zip grava tamanho e crc corretos por entrada", fn: () => {
+  const bytes = lib.zip([{ nome: "a.txt", conteudo: "123456789" }], new Date(2026, 0, 1, 0, 0, 0));
+  const v = new DataView(bytes.buffer);
+  assertEq(v.getUint32(14, true), 0xCBF43926, "crc do conteúdo no cabeçalho local");
+  assertEq(v.getUint32(18, true), 9, "tamanho comprimido = original no método store");
+  assertEq(v.getUint32(22, true), 9, "tamanho original");
+  assertEq(v.getUint16(8, true), 0, "método 0 = store, sem compressão");
+  assertEq(v.getUint16(6, true), 0x0800, "flag de nome em UTF-8 ligada");
+  // arquivo vazio: crc zero e tamanho zero
+  const vazio = lib.zip([{ nome: "x", conteudo: "" }], new Date(2026, 0, 1));
+  const vv = new DataView(vazio.buffer);
+  assertEq(vv.getUint32(14, true), 0, "crc de vazio é zero");
+  assertEq(vv.getUint32(22, true), 0, "tamanho de vazio é zero");
 }});
 
 function renderTestes(el) {
