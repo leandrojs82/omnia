@@ -954,6 +954,18 @@ lib.ambiguo = candidatos =>
   Array.isArray(candidatos) && candidatos.length > 1 &&
   candidatos[1].pontos >= candidatos[0].pontos * 0.7;
 
+const RESERVADOS_WIN = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+// Windows recusa / \ : * ? " < > | e nomes como CON ou COM1, com ou sem extensão.
+lib.nomeSeguro = nome => {
+  let n = String(nome == null ? "" : nome).replace(/[/\\:*?"<>|]/g, "-").trim();
+  n = n.replace(/\.+$/, "").trim();
+  if (!n.replace(/[-\s.]/g, "")) return "arquivo.txt";
+  const base = n.includes(".") ? n.slice(0, n.lastIndexOf(".")) : n;
+  if (RESERVADOS_WIN.test(base)) n = "_" + n;
+  return n;
+};
+
 /* ---------- pomodoro ---------- */
 lib.formatarTempo = seg => {
   seg = Math.max(0, Math.floor(seg));
@@ -1735,6 +1747,21 @@ TESTES.push({ nome: "ambiguo marca empate e ignora diferença grande", fn: () =>
   assertEq(lib.ambiguo([{ pontos: 10 }, { pontos: 5 }]), false, "5 é diferença clara");
   assertEq(lib.ambiguo([{ pontos: 10 }]), false, "sozinho nunca é ambíguo");
   assertEq(lib.ambiguo([]), false, "lista vazia não quebra");
+}});
+TESTES.push({ nome: "nomeSeguro limpa o que o Windows recusa", fn: () => {
+  assertEq(lib.nomeSeguro("docker-compose.yml"), "docker-compose.yml", "nome válido passa intacto");
+  assertEq(lib.nomeSeguro("pasta/arquivo.txt"), "pasta-arquivo.txt", "barra vira hífen");
+  assertEq(lib.nomeSeguro('re:la"to*rio?.txt'), "re-la-to-rio-.txt", "caracteres proibidos viram hífen");
+  assertEq(lib.nomeSeguro("  espacos.md  "), "espacos.md", "corta espaços das pontas");
+  assertEq(lib.nomeSeguro("ponto.final."), "ponto.final", "ponto no fim é removido");
+  assertEq(lib.nomeSeguro("CON"), "_CON", "nome reservado do Windows ganha prefixo");
+  assertEq(lib.nomeSeguro("com1.txt"), "_com1.txt", "reservado com extensão, sem diferenciar maiúsculas");
+  assertEq(lib.nomeSeguro("LPT9"), "_LPT9");
+  assertEq(lib.nomeSeguro("nul.log"), "_nul.log");
+  assertEq(lib.nomeSeguro("///"), "arquivo.txt", "sobrou nada: cai no padrão");
+  assertEq(lib.nomeSeguro(""), "arquivo.txt");
+  assertEq(lib.nomeSeguro(null), "arquivo.txt");
+  assertEq(lib.nomeSeguro("relatório-2026.csv"), "relatório-2026.csv", "acento é válido em nome de arquivo");
 }});
 
 function renderTestes(el) {
