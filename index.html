@@ -2474,6 +2474,7 @@ TOOLS.push({
     let timer = null;
     conteudo.addEventListener("input", () => {
       clearTimeout(timer);
+      btnBaixar.disabled = true;
       timer = setTimeout(() => {
         if (!conteudo.value.trim()) { candidatos = []; escolhido = null; pintar(); return; }
         candidatos = lib.detectarTipo(conteudo.value);
