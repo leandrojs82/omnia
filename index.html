@@ -142,6 +142,8 @@ header {
   background: var(--linha); color: var(--btn-texto);
 }
 .btn:hover { background: var(--acento); border-color: var(--acento); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn:disabled:hover { background: var(--linha); border-color: var(--linha); }
 .btn.secundaria { background: transparent; color: var(--texto); border-color: var(--borda); }
 .btn.secundaria:hover { background: transparent; color: var(--acento); border-color: var(--acento); }
 .saida {
@@ -862,10 +864,10 @@ const TIPOS = [
     { re: /^(DB_|DATABASE_|API_|APP_|SECRET|TOKEN|PORT|NODE_ENV)/m, peso: 4, label: "nome típico de variável de ambiente" }
   ]},
   { id: "sql", nome: "consulta.sql", ext: ".sql", mime: "application/sql", sinais: [
-    { re: /\b(CREATE\s+(TABLE|INDEX|VIEW)|ALTER\s+TABLE)\b/i, peso: 6, label: "CREATE ou ALTER TABLE" },
-    { re: /\bSELECT\b[\s\S]*\bFROM\b/i, peso: 5, label: "SELECT ... FROM" },
-    { re: /\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b/i, peso: 5, label: "INSERT, UPDATE ou DELETE" },
-    { re: /\b(WHERE|JOIN|GROUP\s+BY|ORDER\s+BY)\b/i, peso: 2, label: "cláusula SQL" }
+    { re: /^\s*(CREATE\s+(TABLE|INDEX|VIEW)|ALTER\s+TABLE)\b/im, peso: 6, label: "CREATE ou ALTER TABLE" },
+    { re: /^\s*SELECT\b[\s\S]*\bFROM\b/im, peso: 5, label: "SELECT ... FROM" },
+    { re: /^\s*(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b/im, peso: 5, label: "INSERT, UPDATE ou DELETE" },
+    { re: /\b(WHERE|JOIN|GROUP\s+BY|ORDER\s+BY)\b/, peso: 2, label: "cláusula SQL" }
   ]},
   { id: "json", nome: "dados.json", ext: ".json", mime: "application/json", sinais: [
     { re: /^\s*[{[][\s\S]*[}\]]\s*$/, peso: 5, label: "abre e fecha com chave ou colchete" },
@@ -884,7 +886,7 @@ const TIPOS = [
   { id: "html", nome: "pagina.html", ext: ".html", mime: "text/html", sinais: [
     { re: /<!doctype\s+html/i, peso: 7, label: "<!doctype html>" },
     { re: /<html[\s>]/i, peso: 5, label: "<html>" },
-    { re: /<(body|head|div|p|span|a|script|style)[\s>]/i, peso: 3, label: "tag de HTML" }
+    { re: /<(body|head|div|p|span|a|script|style)[\s>]/i, peso: 5, label: "tag de HTML" }
   ]},
   { id: "css", nome: "estilo.css", ext: ".css", mime: "text/css", sinais: [
     { re: /[.#]?[\w-]+\s*\{[^}]*:[^}]*;[^}]*\}/, peso: 5, label: "seletor { propriedade: valor; }" },
@@ -916,8 +918,8 @@ const TIPOS = [
     { re: /\[[^\]\n]+\]\([^)\n]+\)/, peso: 3, label: "[link](url)" }
   ]},
   { id: "csv", nome: "dados.csv", ext: ".csv", mime: "text/csv", sinais: [
-    { re: /^[^,\n]+(,[^,\n]*){2,}\r?\n[^,\n]+(,[^,\n]*){2,}/, peso: 6, label: "linhas com o mesmo número de vírgulas" },
-    { re: /^[^;\n]+(;[^;\n]*){2,}\r?\n[^;\n]+(;[^;\n]*){2,}/, peso: 6, label: "linhas separadas por ponto e vírgula" }
+    { re: /^[^,\n]+(,[^,\n]*){2,}\r?\n[^,\n]+(,[^,\n]*){2,}/m, peso: 6, label: "linhas com o mesmo número de vírgulas" },
+    { re: /^[^;\n]+(;[^;\n]*){2,}\r?\n[^;\n]+(;[^;\n]*){2,}/m, peso: 6, label: "linhas separadas por ponto e vírgula" }
   ]},
   { id: "ini", nome: "config.ini", ext: ".ini", mime: "text/plain", sinais: [
     { re: /^\[[\w.\s-]+\]\s*$/m, peso: 6, label: "[seção]" },
@@ -951,7 +953,10 @@ lib.detectarTipo = texto => {
     if (pontos > 0) {
       candidatos.push({
         id: tipo.id, nome: tipo.nome, ext: tipo.ext, mime: tipo.mime,
-        pontos, confianca: Math.round((pontos / total) * 100) / 100, sinais: bateram
+        pontos,
+        // Só para exibição — nunca usar para ranquear. Normalizar pelo total do tipo premia
+        // tipos com poucos sinais fáceis (ex.: um só sinal que bate vira 100% de confiança).
+        confianca: Math.round((pontos / total) * 100) / 100, sinais: bateram
       });
     }
   }
@@ -1779,6 +1784,26 @@ TESTES.push({ nome: "nomeSeguro limpa o que o Windows recusa", fn: () => {
   assertEq(lib.nomeSeguro("connection.json"), "connection.json", "nem connection");
   assertEq(lib.nomeSeguro(".gitignore"), ".gitignore", "nome que é só extensão passa intacto");
 }});
+TESTES.push({ nome: "detectarTipo não confunde prosa em inglês com SQL", fn: () => {
+  assertEq(lib.detectarTipo("Please select the file from the list where you saved it yesterday.")[0].id, "txt");
+  assertEq(lib.detectarTipo("I do not know where the meeting is.")[0].id, "txt");
+  assertEq(lib.detectarTipo("We should create a table for the meeting and order by priority.")[0].id, "txt");
+  assertEq(lib.detectarTipo("Hi Ana,\n\nCould you select a date from the options below? Let me know where we should meet.\n\nThanks")[0].id, "txt");
+  // SQL de verdade continua sendo reconhecido nas tres formas
+  assertEq(lib.detectarTipo("CREATE TABLE c (id INT);\nSELECT nome FROM c WHERE id = 1;\n")[0].id, "sql");
+  assertEq(lib.detectarTipo("select nome from clientes where id = 1;\n")[0].id, "sql");
+  assertEq(lib.detectarTipo("    SELECT * FROM pedidos WHERE total > 100;\n")[0].id, "sql");
+}});
+TESTES.push({ nome: "fragmento de HTML ganha do XML genérico", fn: () => {
+  const frag = lib.detectarTipo('<div class="card">\n  <p>Ola mundo</p>\n</div>\n');
+  assertEq(frag[0].id, "html", "fragmento sem doctype ainda é HTML");
+  assertTrue(frag.some(c => c.id === "xml"), "xml continua como alternativa");
+  assertEq(lib.detectarTipo('<?xml version="1.0"?>\n<nota><valor>150</valor></nota>\n')[0].id, "xml", "xml de verdade não regride");
+}});
+TESTES.push({ nome: "CSV com linha em branco antes do cabeçalho", fn: () => {
+  assertEq(lib.detectarTipo("\nnome,idade,cidade\nAna,34,Curitiba\nBruno,28,Recife\n")[0].id, "csv");
+  assertEq(lib.detectarTipo("nome,idade,cidade\nAna,34,Curitiba\nBruno,28,Recife\n")[0].id, "csv", "sem linha em branco não regride");
+}});
 
 function renderTestes(el) {
   const r = rodarTestes();
@@ -2454,17 +2479,20 @@ TOOLS.push({
     const pintar = () => {
       if (!escolhido) { palpite.hidden = true; btnBaixar.disabled = true; return; }
       const alternativas = candidatos.filter(c => c.id !== escolhido.id).slice(0, 3);
-      const mostrarAlt = alternativas.length && (lib.ambiguo(candidatos) || candidatos[0].id !== escolhido.id);
+      // Só o texto do cabeçalho muda com o empate — as alternativas sempre aparecem do mesmo jeito.
+      const rotuloEmpate = alternativas.length && (lib.ambiguo(candidatos) || candidatos[0].id !== escolhido.id);
       palpite.innerHTML =
         '<div class="arq-titulo">Parece um <strong>' + escolhido.nome + '</strong></div>' +
         '<div class="arq-sinais">Bateu: ' + escolhido.sinais.join(" · ") + '</div>' +
         (alternativas.length ? '<div class="arq-alternativas"><span>' +
-          (mostrarAlt ? "Ou talvez" : "Outras opções") + '</span></div>' : '');
+          (rotuloEmpate ? "Ou talvez" : "Outras opções") + '</span></div>' : '');
       const caixa = palpite.querySelector(".arq-alternativas");
       if (caixa) alternativas.forEach(c => {
         const b = document.createElement("button");
         b.type = "button"; b.className = "arq-alt"; b.textContent = c.nome;
-        b.onclick = () => { escolhido = c; if (!nomeEditado) nome.value = c.nome; pintar(); };
+        // Clicar numa alternativa é escolha deliberada: escreve o nome direto, sem olhar nomeEditado.
+        // nomeEditado continua intocado para que a próxima detecção automática ainda respeite um nome digitado.
+        b.onclick = () => { escolhido = c; nome.value = c.nome; pintar(); };
         caixa.appendChild(b);
       });
       palpite.hidden = false;
@@ -2485,20 +2513,28 @@ TOOLS.push({
     });
 
     const baixar = () => {
-      if (!conteudo.value.trim()) { ui.toast("Cole algum conteúdo primeiro"); return; }
+      // Sem guarda para conteúdo vazio aqui: o botão fica desabilitado (e agora parece desabilitado)
+      // sempre que não há conteúdo, então este caminho nunca seria alcançado por um clique real.
       const limpo = lib.nomeSeguro(nome.value || (escolhido && escolhido.nome));
-      if (limpo !== nome.value) { nome.value = limpo; ui.toast("Nome ajustado para " + limpo); }
-      const blob = new Blob([conteudo.value], { type: (escolhido && escolhido.mime) || "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = limpo;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const ajustou = limpo !== nome.value;
+      if (ajustou) nome.value = limpo;
+      try {
+        const blob = new Blob([conteudo.value], { type: (escolhido && escolhido.mime) || "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = limpo;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        // As duas mensagens não podem se atropelar: o toast é único, então elas viajam juntas quando as duas se aplicam.
+        ui.toast(ajustou ? "Nome ajustado para " + limpo + " — baixando" : "Baixando " + limpo);
+      } catch (e) {
+        ui.toast("Não foi possível baixar — copie o conteúdo manualmente");
+      }
     };
 
     btnBaixar.disabled = true;
     ui.montar(el, conteudo, palpite, nome, ui.linha(btnBaixar),
-      ui.nota("O reconhecimento é um palpite baseado nos sinais listados — o nome final é sempre seu. O conteúdo baixa exatamente como está aí em cima, sem nenhuma alteração."));
+      ui.nota("O reconhecimento é um palpite baseado nos sinais listados — o nome final é sempre seu. O conteúdo baixa exatamente como está aí em cima, sem nenhuma alteração — exceto quebras de linha: o navegador sempre grava só LF, mesmo que o original tivesse CRLF."));
   }
 });
 
