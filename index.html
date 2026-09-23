@@ -923,6 +923,37 @@ const TIPOS = [
 // Piso: quando nada bate, ainda existe uma saída honesta.
 const TIPO_TXT = { id: "txt", nome: "arquivo.txt", ext: ".txt", mime: "text/plain", sinais: [] };
 
+// Soma os pesos dos sinais que batem, normaliza pelo total possível daquele tipo.
+// Devolve os candidatos do mais para o menos provável. Nunca devolve lista vazia.
+lib.detectarTipo = texto => {
+  const t = texto == null ? "" : String(texto);
+  if (!t.trim()) return [{ ...TIPO_TXT, pontos: 0, confianca: 0.1, sinais: ["conteúdo vazio"] }];
+
+  const candidatos = [];
+  for (const tipo of TIPOS) {
+    const total = tipo.sinais.reduce((soma, s) => soma + s.peso, 0);
+    let pontos = 0;
+    const bateram = [];
+    for (const s of tipo.sinais) {
+      if (s.re.test(t)) { pontos += s.peso; bateram.push(s.label); }
+    }
+    if (pontos > 0) {
+      candidatos.push({
+        id: tipo.id, nome: tipo.nome, ext: tipo.ext, mime: tipo.mime,
+        pontos, confianca: Math.round((pontos / total) * 100) / 100, sinais: bateram
+      });
+    }
+  }
+  if (!candidatos.length) return [{ ...TIPO_TXT, pontos: 0, confianca: 0.1, sinais: ["nenhum padrão de código reconhecido"] }];
+  candidatos.sort((a, b) => b.pontos - a.pontos || b.confianca - a.confianca);
+  return candidatos;
+};
+
+// Empate: o segundo colocado tem pelo menos 70% dos pontos do primeiro.
+lib.ambiguo = candidatos =>
+  Array.isArray(candidatos) && candidatos.length > 1 &&
+  candidatos[1].pontos >= candidatos[0].pontos * 0.7;
+
 /* ---------- pomodoro ---------- */
 lib.formatarTempo = seg => {
   seg = Math.max(0, Math.floor(seg));
@@ -1643,6 +1674,67 @@ TESTES.push({ nome: "tabela TIPOS está íntegra", fn: () => {
   assertEq(TIPOS.length, 18, "os 18 tipos do spec");
   assertEq(TIPO_TXT.ext, ".txt");
   assertTrue(!vistos.has(TIPO_TXT.id), "txt é fallback, não entra em TIPOS");
+}});
+
+TESTES.push({ nome: "detectarTipo acerta cada um dos 18 tipos", fn: () => {
+  const amostras = {
+    "docker-compose": "services:\n  web:\n    image: nginx:alpine\n    ports:\n      - '80:80'\n    environment:\n      - TZ=America/Sao_Paulo\n",
+    "dockerfile": "FROM node:20-alpine\nWORKDIR /app\nCOPY package.json .\nRUN npm install\nCMD [\"npm\", \"start\"]\n",
+    "package-json": '{\n  "name": "meu-app",\n  "version": "1.0.0",\n  "scripts": { "dev": "vite" },\n  "dependencies": { "vue": "^3.4.0" }\n}\n',
+    "tsconfig": '{\n  "compilerOptions": {\n    "target": "ES2020",\n    "strict": true,\n    "outDir": "./dist"\n  }\n}\n',
+    "env": "NODE_ENV=production\nDB_HOST=localhost\nDB_PORT=5432\nAPI_KEY=abc123\n",
+    "sql": "CREATE TABLE clientes (\n  id SERIAL PRIMARY KEY,\n  nome TEXT NOT NULL\n);\nSELECT nome FROM clientes WHERE id = 1;\n",
+    "json": '{\n  "cidade": "Curitiba",\n  "populacao": 1963726,\n  "capital": true\n}\n',
+    "yaml": "nome: relatorio\nversao: 2\nsaidas:\n  - csv\n  - pdf\nativo: true\n",
+    "xml": '<?xml version="1.0" encoding="UTF-8"?>\n<nota>\n  <valor>150.00</valor>\n</nota>\n',
+    "html": '<!doctype html>\n<html lang="pt-BR">\n<body>\n  <div>Olá</div>\n</body>\n</html>\n',
+    "css": ":root { --cor: #333; }\n.cartao {\n  display: flex;\n  padding: 12px;\n  color: var(--cor);\n}\n",
+    "js": "const soma = (a, b) => a + b;\nfunction dobro(n) { return n * 2; }\nmodule.exports = { soma, dobro };\n",
+    "py": "import sys\n\ndef principal(nome):\n    print(f'Olá {nome}')\n\nif __name__ == '__main__':\n    principal(sys.argv[1])\n",
+    "sh": "#!/bin/bash\nset -e\ncd /opt/app\nexport NODE_ENV=production\necho \"Publicando ${VERSAO}\"\n",
+    "md": "# Relatório\n\nTexto com **negrito** e um [link](https://exemplo.com).\n\n- primeiro\n- segundo\n\n```js\nconsole.log(1);\n```\n",
+    "csv": "nome,idade,cidade\nAna,34,Curitiba\nBruno,28,Recife\nCarla,41,Salvador\n",
+    "ini": "[banco]\nhost = localhost\nporta = 5432\n\n[app]\ndebug = false\n",
+    "gitignore": "node_modules/\ndist/\n*.log\n*.tmp\n!importante.log\n"
+  };
+  for (const [id, amostra] of Object.entries(amostras)) {
+    const top = lib.detectarTipo(amostra)[0];
+    assertEq(top.id, id, "amostra de " + id + " foi lida como " + top.id);
+    assertTrue(top.sinais.length > 0, id + " precisa listar os sinais que bateram");
+    assertTrue(top.confianca > 0 && top.confianca <= 1, id + " confiança fora de 0–1: " + top.confianca);
+  }
+}});
+TESTES.push({ nome: "detectarTipo separa o específico do genérico", fn: () => {
+  const compose = "services:\n  web:\n    image: nginx\n    ports:\n      - '80:80'\n";
+  const cands = lib.detectarTipo(compose);
+  assertEq(cands[0].id, "docker-compose");
+  assertTrue(cands.some(c => c.id === "yaml"), "yaml genérico deve aparecer como alternativa");
+  assertTrue(cands.findIndex(c => c.id === "yaml") > 0, "yaml não pode ganhar do docker-compose");
+  // Este é o caso que derrubou a normalização: por confiança o yaml ganharia (0,80 x 0,75).
+  const yaml = cands.find(c => c.id === "yaml");
+  assertTrue(cands[0].pontos > yaml.pontos, "ordenação tem que ser por pontos absolutos");
+
+  const pkg = '{ "name": "x", "version": "1.0.0", "scripts": {}, "dependencies": {} }';
+  const cp = lib.detectarTipo(pkg);
+  assertEq(cp[0].id, "package-json");
+  assertTrue(cp.some(c => c.id === "json"), "json genérico deve aparecer como alternativa");
+}});
+TESTES.push({ nome: "detectarTipo cai no txt quando não reconhece nada", fn: () => {
+  const prosa = "Reunião de terça ficou para quinta. Avisar o time e remarcar a sala.";
+  const c1 = lib.detectarTipo(prosa);
+  assertEq(c1[0].id, "txt", "prosa em português não pode virar código");
+  assertEq(c1.length, 1);
+  assertEq(lib.detectarTipo("")[0].id, "txt", "vazio");
+  assertEq(lib.detectarTipo("   \n  \n")[0].id, "txt", "só espaços");
+  assertEq(lib.detectarTipo(null)[0].id, "txt", "null não derruba");
+  assertEq(lib.detectarTipo(undefined)[0].id, "txt", "undefined não derruba");
+}});
+TESTES.push({ nome: "ambiguo marca empate e ignora diferença grande", fn: () => {
+  assertEq(lib.ambiguo([{ pontos: 10 }, { pontos: 8 }]), true, "8 de 10 é empate");
+  assertEq(lib.ambiguo([{ pontos: 10 }, { pontos: 7 }]), true, "7 é o limite, conta");
+  assertEq(lib.ambiguo([{ pontos: 10 }, { pontos: 5 }]), false, "5 é diferença clara");
+  assertEq(lib.ambiguo([{ pontos: 10 }]), false, "sozinho nunca é ambíguo");
+  assertEq(lib.ambiguo([]), false, "lista vazia não quebra");
 }});
 
 function renderTestes(el) {
