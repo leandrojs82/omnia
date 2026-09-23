@@ -1071,6 +1071,25 @@ lib.zip = (entradas, agora = new Date()) => {
   return saida;
 };
 
+// Uma linha, um nome. Linha em branco é ruído de quem colou e some sem aviso;
+// nome repetido provavelmente é engano, então volta em "repetidos" para a interface avisar.
+lib.nomesDeLinhas = texto => {
+  const linhas = String(texto == null ? "" : texto).split("\n");
+  const nomes = [], vistos = new Set(), repetidos = [], jaAvisados = new Set();
+  for (const linha of linhas) {
+    const cru = linha.trim();
+    if (!cru) continue;
+    const limpo = lib.nomeSeguro(cru);
+    if (vistos.has(limpo)) {
+      if (!jaAvisados.has(limpo)) { repetidos.push(limpo); jaAvisados.add(limpo); }
+      continue;
+    }
+    vistos.add(limpo);
+    nomes.push(limpo);
+  }
+  return { nomes, repetidos };
+};
+
 /* ---------- pomodoro ---------- */
 lib.formatarTempo = seg => {
   seg = Math.max(0, Math.floor(seg));
@@ -1964,6 +1983,27 @@ TESTES.push({ nome: "zip grava o diretorio central com os deslocamentos corretos
   // o ponteiro realmente aponta para um cabeçalho local válido
   assertEq(v.getUint32(deslocamentoLido, true), 0x04034b50, "cabeçalho local apontado pelo diretório central tem a assinatura certa");
   assertEq(v.getUint32(c2 + 16, true), 0, "crc do diretório central bate com o do cabeçalho local (entrada 2, vazio)");
+}});
+
+TESTES.push({ nome: "nomesDeLinhas limpa, ordena e aponta repetidos", fn: () => {
+  const r = lib.nomesDeLinhas("docker-compose.yml\n.env\n.gitignore");
+  assertEq(r.nomes, ["docker-compose.yml", ".env", ".gitignore"], "ordem preservada");
+  assertEq(r.repetidos, []);
+
+  const vazias = lib.nomesDeLinhas("\n\n  a.txt  \n\n   \nb.txt\n\n");
+  assertEq(vazias.nomes, ["a.txt", "b.txt"], "linhas em branco somem e espaços são cortados");
+
+  const rep = lib.nomesDeLinhas("a.txt\nb.txt\na.txt\nb.txt\na.txt");
+  assertEq(rep.nomes, ["a.txt", "b.txt"], "duplicata entra uma vez só");
+  assertEq(rep.repetidos, ["a.txt", "b.txt"], "cada repetido aparece uma vez na lista de avisos");
+
+  const sujo = lib.nomesDeLinhas("pasta/arquivo.txt\nCON.tar.gz");
+  assertEq(sujo.nomes, ["pasta-arquivo.txt", "_CON.tar.gz"], "passa pelo nomeSeguro");
+
+  assertEq(lib.nomesDeLinhas("").nomes, []);
+  assertEq(lib.nomesDeLinhas("   \n  \n").nomes, [], "só espaços não vira nome");
+  assertEq(lib.nomesDeLinhas(null).nomes, [], "null não derruba");
+  assertEq(lib.nomesDeLinhas(undefined).nomes, []);
 }});
 
 function renderTestes(el) {
