@@ -961,7 +961,7 @@ lib.nomeSeguro = nome => {
   let n = String(nome == null ? "" : nome).replace(/[/\\:*?"<>|]/g, "-").trim();
   n = n.replace(/\.+$/, "").trim();
   if (!n.replace(/[-\s.]/g, "")) return "arquivo.txt";
-  const base = n.includes(".") ? n.slice(0, n.lastIndexOf(".")) : n;
+  const base = n.includes(".") ? n.slice(0, n.indexOf(".")) : n;
   if (RESERVADOS_WIN.test(base)) n = "_" + n;
   return n;
 };
@@ -1762,6 +1762,11 @@ TESTES.push({ nome: "nomeSeguro limpa o que o Windows recusa", fn: () => {
   assertEq(lib.nomeSeguro(""), "arquivo.txt");
   assertEq(lib.nomeSeguro(null), "arquivo.txt");
   assertEq(lib.nomeSeguro("relatório-2026.csv"), "relatório-2026.csv", "acento é válido em nome de arquivo");
+  assertEq(lib.nomeSeguro("CON.tar.gz"), "_CON.tar.gz", "nome reservado com mais de um ponto");
+  assertEq(lib.nomeSeguro("prn.tar.bz2"), "_prn.tar.bz2", "reservado multi-ponto em minúsculas");
+  assertEq(lib.nomeSeguro("console.log"), "console.log", "console não é CON — não pode ganhar prefixo");
+  assertEq(lib.nomeSeguro("connection.json"), "connection.json", "nem connection");
+  assertEq(lib.nomeSeguro(".gitignore"), ".gitignore", "nome que é só extensão passa intacto");
 }});
 
 function renderTestes(el) {
