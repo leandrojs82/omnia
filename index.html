@@ -187,6 +187,25 @@ header {
 .fmt-copiar:hover { color: var(--acento); }
 .fmt-tokens { font-family: var(--mono); font-size: 12px; }
 @media (max-width: 767px) { .fmt-linha { grid-template-columns: 1fr auto; } .fmt-valor { grid-column: 1 / -1; } }
+.campo textarea.arv-entrada { min-height: 190px; font-family: var(--mono); font-size: 13px; line-height: 1.7; }
+.arv-opcoes { display: flex; flex-direction: column; gap: 12px; }
+.arv-opcao { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; line-height: 1.5; cursor: pointer; }
+.arv-opcao input { flex: 0 0 auto; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--acento); }
+.arv-opcao[data-inativo="sim"] { color: var(--texto-fraco); cursor: default; }
+.arv-previa {
+  max-height: 400px; overflow: auto;
+  border: 1px solid var(--borda); border-radius: var(--r);
+  background: var(--surface-2); padding: 14px 16px;
+  font-family: var(--mono); font-size: 13px; line-height: 1.9;
+}
+.arv-linha { display: flex; gap: 8px; white-space: nowrap; }
+.arv-linha[data-tipo="pasta"] { color: var(--acento); }
+.arv-linha[data-tipo="arquivo"] { color: var(--texto-fraco); }
+.arv-icone { flex: 0 0 auto; }
+.arv-nada { color: var(--texto-fraco); font-family: var(--sans); white-space: normal; }
+.arv-resumo { margin-top: 10px; font-size: 13px; color: var(--texto-fraco); }
+.arv-aviso { margin-top: 8px; font-size: 13px; color: var(--acento); line-height: 1.6; }
+
 .arq-palpite { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--linha); }
 .arq-titulo { font-size: 17px; margin-bottom: 6px; }
 .arq-titulo strong { font-family: var(--mono); color: var(--acento); font-weight: 400; }
@@ -1096,6 +1115,171 @@ lib.nomesDeLinhas = texto => {
   return { nomes, repetidos };
 };
 
+/* ---------- árvore de projeto ---------- */
+
+// Nomes consagrados que são arquivo apesar de não terem extensão. Sem esta lista
+// "Dockerfile" e "Makefile" cairiam na regra "sem ponto = pasta" e virariam diretório.
+const ARQUIVOS_SEM_EXTENSAO = new Set([
+  "dockerfile", "containerfile", "makefile", "license", "licence", "readme", "changelog",
+  "authors", "notice", "codeowners", "owners", "procfile", "gemfile", "rakefile",
+  "jenkinsfile", "vagrantfile", "brewfile", "justfile", "contributing", "copying",
+  "install", "news", "todo", "version", "manifest"
+]);
+
+// Consome o desenho à esquerda e devolve a coluna onde o nome começa, ou -1 se a
+// linha é só desenho. O desenho é feito de colunas de continuação (espaço, │, ou |
+// seguido de espaço) e, no fim, um marcador de galho (├── └── |-- `-- +--).
+const inicioDoNome = linha => {
+  let i = 0;
+  while (i < linha.length) {
+    const c = linha[i];
+    if (c === " " || c === "│") { i++; continue; }
+    // "|" é continuação quando vem espaço depois, e marcador quando vem traço.
+    if (c === "|" && !/[-=─]/.test(linha[i + 1] || " ")) { i++; continue; }
+    break;
+  }
+  const m = linha.slice(i).match(/^[├└╞|+`\\][─\-=]*[ ]*/);
+  if (m) i += m[0].length;
+  return i >= linha.length ? -1 : i;
+};
+
+// Um segmento é arquivo quando tem extensão de verdade: um ponto com algo antes
+// (Post.java) ou um nome que começa com ponto e não tem outro (.env, .gitignore).
+const temExtensao = seg => /[^.]\.[^.]+$/.test(seg) || /^\.[^.]+$/.test(seg);
+
+lib.caminhoSeguro = caminho => String(caminho == null ? "" : caminho)
+  .split(/[/\\]+/)
+  .map(s => s.trim())
+  // "." e ".." fora: um zip não tem o direito de escrever acima da pasta onde foi aberto.
+  .filter(s => s && s !== "." && s !== "..")
+  .map(s => lib.nomeSeguro(s))
+  .join("/");
+
+lib.parseArvore = texto => {
+  const linhas = String(texto == null ? "" : texto).split("\n");
+  const avisos = [], nos = [], pilha = [];
+
+  for (const bruta of linhas) {
+    const linha = bruta.replace(/\t/g, "    ").replace(/\s+$/, "");
+    if (!linha.trim()) continue;
+    const coluna = inicioDoNome(linha);
+    if (coluna < 0) continue;
+    // Comentário à direita do nome é anotação de quem desenhou, não parte do caminho.
+    let cru = linha.slice(coluna).replace(/\s+(?:#|\/\/|<--|←|→).*$/, "").trim();
+    if (!cru) continue;
+
+    const pasta = /[/\\]$/.test(cru);
+    cru = cru.replace(/[/\\]+$/, "");
+    const caminho = lib.caminhoSeguro(cru);
+    if (!caminho) continue;
+
+    while (pilha.length && pilha[pilha.length - 1].coluna >= coluna) pilha.pop();
+    const pai = pilha.length ? pilha[pilha.length - 1].no : null;
+
+    const seg = caminho.slice(caminho.lastIndexOf("/") + 1);
+    // Sem barra no fim: tem extensão ou é nome consagrado → arquivo; o resto é pasta.
+    const arquivo = !pasta && (temExtensao(seg) || ARQUIVOS_SEM_EXTENSAO.has(seg.toLowerCase()));
+    const no = { trecho: caminho, pai, coluna, filhos: 0, nivel: pilha.length, pasta: !arquivo, explicita: pasta };
+    if (pai) pai.filhos++;
+    nos.push(no);
+    pilha.push({ coluna, no });
+  }
+
+  // O desenho manda: o que tem item abaixo é pasta, mesmo que o nome pareça arquivo.
+  const viraram = [];
+  for (const no of nos) {
+    if (no.filhos > 0 && !no.pasta) { no.pasta = true; viraram.push(no.trecho); }
+  }
+  if (viraram.length) {
+    avisos.push("Tem itens abaixo na árvore, então é pasta: " + viraram.join(", "));
+  }
+
+  // Indentação perdida na cópia: pasta desenhada vazia com a linha seguinte na mesma
+  // coluna quase sempre era pasta com filhos. Não dá para adivinhar qual era a intenção,
+  // então o desenho é obedecido ao pé da letra e o usuário fica sabendo.
+  const rasas = [];
+  for (let i = 0; i < nos.length - 1; i++) {
+    const no = nos[i];
+    if (no.pasta && no.filhos === 0 && nos[i + 1].coluna === no.coluna) rasas.push(no.trecho + "/");
+  }
+  if (rasas.length) {
+    avisos.push("Ficou sem nada dentro, mas a linha seguinte está na mesma coluna: " +
+      rasas.join(", ") + ". Se o que vem depois era para estar dentro, aumente a indentação dessas linhas.");
+  }
+
+  // Nome sem ponto e sem barra no fim é um palpite — nunca afirmar sem dizer.
+  const supostas = nos
+    .filter(n => n.pasta && !n.explicita && n.filhos === 0)
+    .map(n => n.trecho);
+  if (supostas.length) {
+    avisos.push("Sem extensão e sem itens abaixo, tratei como pasta vazia: " +
+      supostas.join(", ") + ". Se é arquivo, acrescente a extensão; se é pasta, pode deixar.");
+  }
+
+  const itens = [], vistos = new Set(), repetidos = [];
+  for (const no of nos) {
+    const partes = [];
+    for (let p = no; p; p = p.pai) partes.unshift(p.trecho);
+    const caminho = partes.join("/");
+    if (vistos.has(caminho)) { if (!repetidos.includes(caminho)) repetidos.push(caminho); continue; }
+    vistos.add(caminho);
+    itens.push({ caminho, trecho: no.trecho, pasta: no.pasta, nivel: no.nivel });
+  }
+  if (repetidos.length) avisos.push("Caminho repetido, entra uma vez só: " + repetidos.join(", "));
+
+  const raizes = itens.filter(i => i.nivel === 0);
+  const raiz = raizes.length === 1 && raizes[0].pasta ? raizes[0].caminho : null;
+
+  return { itens, avisos, raiz };
+};
+
+// Sem sintaxe conhecida, nenhum comentário: uma linha de texto solta estragaria
+// o formato do arquivo, e um arquivo estragado é pior que um arquivo vazio.
+const COMENTARIOS = [
+  { abre: "// ", ext: "js mjs cjs jsx ts tsx java kt kts c h cpp hpp cc cs go rs swift scala php dart groovy gradle sol proto" },
+  { abre: "# ", ext: "py rb sh bash zsh fish yml yaml toml ini conf cfg properties env pl r ps1 tf gitignore dockerignore editorconfig gitattributes" },
+  { abre: "-- ", ext: "sql hs lua" },
+  { abre: "<!-- ", fecha: " -->", ext: "html htm xhtml xml svg vue svelte md markdown" },
+  { abre: "/* ", fecha: " */", ext: "css scss sass less" }
+];
+const NOMES_COM_CERQUILHA = new Set(["dockerfile", "containerfile", "makefile", "procfile", "gemfile", "rakefile", "justfile", "brewfile"]);
+
+lib.comentarioLocal = caminho => {
+  const c = String(caminho == null ? "" : caminho);
+  const seg = c.slice(c.lastIndexOf("/") + 1);
+  if (!seg) return "";
+  const minusculo = seg.toLowerCase();
+  if (NOMES_COM_CERQUILHA.has(minusculo)) return "# " + c + "\n";
+  const ponto = minusculo.lastIndexOf(".");
+  const ext = ponto >= 0 ? minusculo.slice(ponto + 1) : minusculo;
+  const regra = COMENTARIOS.find(r => r.ext.split(" ").indexOf(ext) >= 0);
+  return regra ? regra.abre + c + (regra.fecha || "") + "\n" : "";
+};
+
+// As pastas intermediárias de um caminho comprimido (src/main/java/) não aparecem
+// como linha na árvore, mas precisam de entrada própria no zip para existirem.
+lib.arvoreParaZip = (itens, opcoes = {}) => {
+  const { arquivos = true, comentarios = false } = opcoes;
+  const pastas = new Set();
+  const marcarAncestrais = caminho => {
+    const partes = caminho.split("/");
+    for (let i = 1; i < partes.length; i++) pastas.add(partes.slice(0, i).join("/"));
+  };
+  const listaArquivos = [];
+  for (const it of itens) {
+    marcarAncestrais(it.caminho);
+    if (it.pasta) pastas.add(it.caminho);
+    else listaArquivos.push(it.caminho);
+  }
+  const entradas = [...pastas].sort().map(p => ({ nome: p + "/", conteudo: "" }));
+  if (arquivos) {
+    for (const a of listaArquivos.slice().sort()) {
+      entradas.push({ nome: a, conteudo: comentarios ? lib.comentarioLocal(a) : "" });
+    }
+  }
+  return { entradas, pastas: pastas.size, arquivos: arquivos ? listaArquivos.length : 0 };
+};
+
 /* ---------- pomodoro ---------- */
 lib.formatarTempo = seg => {
   seg = Math.max(0, Math.floor(seg));
@@ -1677,6 +1861,151 @@ TESTES.push({ nome: "imcFaixaPeso e imc concordam nos limites da faixa", fn: () 
     assertEq(lib.imc(Math.round((r.max + 0.1) * 10) / 10, altura).classificacao, "Sobrepeso",
       "peso logo acima do máximo da faixa (" + altura + "m)");
   });
+}});
+
+/* --- árvore de projeto --- */
+TESTES.push({ nome: "caminhoSeguro limpa segmento por segmento", fn: () => {
+  assertEq(lib.caminhoSeguro("src/main/java"), "src/main/java", "caminho válido passa intacto");
+  assertEq(lib.caminhoSeguro("../../etc/passwd"), "etc/passwd", "travessia de diretório é removida");
+  assertEq(lib.caminhoSeguro("./a/./b"), "a/b", "segmento ponto é descartado");
+  assertEq(lib.caminhoSeguro("src\\main\\App.java"), "src/main/App.java", "barra invertida do Windows vira barra");
+  assertEq(lib.caminhoSeguro("src/con/aux.txt"), "src/_con/_aux.txt", "reservado do Windows vale para pasta também");
+  assertEq(lib.caminhoSeguro("a//b///c"), "a/b/c", "barras repetidas somem");
+  assertEq(lib.caminhoSeguro(' a / b"x" '), "a/b-x-", "espaço nas pontas e caractere proibido dentro do segmento");
+  assertEq(lib.caminhoSeguro("///"), "", "sobrou nada: devolve vazio, não um palpite");
+  assertEq(lib.caminhoSeguro(""), "");
+  assertEq(lib.caminhoSeguro(null), "", "null não derruba");
+}});
+
+TESTES.push({ nome: "parseArvore lê indentação unicode e devolve caminho, nível e tipo", fn: () => {
+  const r = lib.parseArvore([
+    "projeto/",
+    "├── src/",
+    "│   ├── main/",
+    "│   │   └── App.java",
+    "│   └── util.java",
+    "└── pom.xml"
+  ].join("\n"));
+  assertEq(r.itens.map(i => i.caminho), [
+    "projeto", "projeto/src", "projeto/src/main",
+    "projeto/src/main/App.java", "projeto/src/util.java", "projeto/pom.xml"
+  ]);
+  assertEq(r.itens.map(i => i.nivel), [0, 1, 2, 3, 2, 1]);
+  assertEq(r.itens.map(i => i.pasta), [true, true, true, false, false, false]);
+  assertEq(r.avisos, [], "árvore bem formada não gera aviso");
+  assertEq(r.raiz, "projeto");
+}});
+
+TESTES.push({ nome: "parseArvore lê desenho ascii e tabulação", fn: () => {
+  const r = lib.parseArvore("projeto/\n|-- src/\n|   |-- main.py\n|   `-- util.py\n+-- README.md\n`-- Makefile");
+  assertEq(r.itens.map(i => i.caminho), [
+    "projeto", "projeto/src", "projeto/src/main.py",
+    "projeto/src/util.py", "projeto/README.md", "projeto/Makefile"
+  ]);
+  assertEq(r.itens.map(i => i.pasta), [true, true, false, false, false, false],
+    "Makefile é arquivo apesar de não ter extensão");
+  const comTab = lib.parseArvore("raiz/\n\tsub/\n\t\ta.txt");
+  assertEq(comTab.itens.map(i => i.caminho), ["raiz", "raiz/sub", "raiz/sub/a.txt"],
+    "tabulação conta como indentação");
+}});
+
+TESTES.push({ nome: "parseArvore mantém o caminho comprimido num nível só", fn: () => {
+  const r = lib.parseArvore("app/\n├── src/main/java/com/x/\n│   └── A.java\n└── pom.xml");
+  assertEq(r.itens.map(i => i.caminho), [
+    "app", "app/src/main/java/com/x", "app/src/main/java/com/x/A.java", "app/pom.xml"
+  ]);
+  assertEq(r.itens.map(i => i.nivel), [0, 1, 2, 1], "caminho comprimido é um nível do desenho, não vários");
+  assertEq(r.itens[1].trecho, "src/main/java/com/x", "a prévia mostra o trecho como foi desenhado");
+}});
+
+TESTES.push({ nome: "parseArvore avisa quando a indentação se perdeu, em vez de nestar errado", fn: () => {
+  // Colagem que perdeu a indentação: entity/ e Post.java acabam na mesma coluna.
+  const r = lib.parseArvore("app/\n│ └── entity/\n│ ├── Post.java");
+  assertEq(r.itens.map(i => i.caminho), ["app", "app/entity", "app/Post.java"],
+    "o desenho manda: mesma coluna é irmão, não filho");
+  assertTrue(r.avisos.some(a => a.indexOf("entity/") >= 0),
+    "pasta desenhada vazia seguida de irmão tem de gerar aviso");
+  const ok = lib.parseArvore("app/\n└── entity/\n    └── Post.java");
+  assertEq(ok.itens.map(i => i.caminho), ["app", "app/entity", "app/entity/Post.java"]);
+  assertEq(ok.avisos, [], "indentação correta não gera aviso");
+}});
+
+TESTES.push({ nome: "parseArvore classifica nome sem extensão e avisa o palpite", fn: () => {
+  const r = lib.parseArvore("r/\n├── Dockerfile\n├── LICENSE\n├── .gitignore\n├── .env\n└── bin");
+  assertEq(r.itens.map(i => i.pasta), [true, false, false, false, false, true]);
+  assertTrue(r.avisos.some(a => a.indexOf("bin") >= 0),
+    "pasta suposta por falta de extensão precisa de aviso");
+  assertEq(lib.parseArvore("r/\n└── bin/").avisos, [], "a barra no fim resolve a dúvida sem aviso");
+}});
+
+TESTES.push({ nome: "parseArvore: item com filho é pasta mesmo com extensão no nome", fn: () => {
+  const r = lib.parseArvore("r/\n└── pom.xml\n    └── dentro.txt");
+  assertEq(r.itens.map(i => i.pasta), [true, true, false]);
+  assertEq(r.itens.map(i => i.caminho), ["r", "r/pom.xml", "r/pom.xml/dentro.txt"]);
+  assertTrue(r.avisos.some(a => a.indexOf("pom.xml") >= 0), "a reclassificação precisa aparecer na tela");
+}});
+
+TESTES.push({ nome: "parseArvore ignora o ruído da colagem", fn: () => {
+  const r = lib.parseArvore("\n\nr/\n│\n├── a.txt   # anotação minha\n├── b.txt // outra\n\n├── a.txt\n");
+  assertEq(r.itens.map(i => i.caminho), ["r", "r/a.txt", "r/b.txt"],
+    "linha vazia, linha só com │ e comentário à direita somem; repetido entra uma vez");
+  assertTrue(r.avisos.some(a => a.indexOf("repetido") >= 0));
+  assertEq(lib.parseArvore("").itens, []);
+  assertEq(lib.parseArvore("   \n  ").itens, []);
+  assertEq(lib.parseArvore(null).itens, [], "null não derruba");
+  assertEq(lib.parseArvore("│\n│ │").itens, [], "só desenho não vira item");
+}});
+
+TESTES.push({ nome: "comentarioLocal usa a sintaxe da extensão e cala no desconhecido", fn: () => {
+  assertEq(lib.comentarioLocal("a/b/Post.java"), "// a/b/Post.java\n");
+  assertEq(lib.comentarioLocal("x/main.py"), "# x/main.py\n");
+  assertEq(lib.comentarioLocal("s/schema.sql"), "-- s/schema.sql\n");
+  assertEq(lib.comentarioLocal("p/index.html"), "<!-- p/index.html -->\n");
+  assertEq(lib.comentarioLocal("p/estilo.css"), "/* p/estilo.css */\n");
+  assertEq(lib.comentarioLocal("r/Dockerfile"), "# r/Dockerfile\n", "nome consagrado sem extensão");
+  assertEq(lib.comentarioLocal("a/.env"), "# a/.env\n");
+  assertEq(lib.comentarioLocal("p/package.json"), "",
+    "json não aceita comentário: arquivo quebrado é pior que arquivo vazio");
+  assertEq(lib.comentarioLocal("b/dados.bin"), "", "extensão desconhecida não ganha palpite");
+  assertEq(lib.comentarioLocal(""), "");
+  assertEq(lib.comentarioLocal(null), "");
+}});
+
+TESTES.push({ nome: "arvoreParaZip cria as pastas intermediárias do caminho comprimido", fn: () => {
+  const itens = lib.parseArvore("app/\n└── src/main/java/\n    └── A.java").itens;
+  const z = lib.arvoreParaZip(itens);
+  assertEq(z.entradas.map(e => e.nome), [
+    "app/", "app/src/", "app/src/main/", "app/src/main/java/", "app/src/main/java/A.java"
+  ], "src/ e main/ não são linha da árvore, mas precisam de entrada própria no zip");
+  assertEq(z.pastas, 4);
+  assertEq(z.arquivos, 1);
+  assertTrue(z.entradas.filter(e => e.nome.slice(-1) === "/").every(e => e.conteudo === ""),
+    "entrada de pasta é sempre vazia");
+}});
+
+TESTES.push({ nome: "arvoreParaZip respeita as duas opções", fn: () => {
+  const itens = lib.parseArvore("app/\n├── vazio/\n└── a.py").itens;
+  const so = lib.arvoreParaZip(itens, { arquivos: false });
+  assertEq(so.entradas.map(e => e.nome), ["app/", "app/vazio/"], "sem arquivos, sai só a estrutura de pastas");
+  assertEq(so.arquivos, 0);
+  const com = lib.arvoreParaZip(itens, { arquivos: true, comentarios: true });
+  const ultima = com.entradas[com.entradas.length - 1];
+  assertEq(ultima.nome, "app/a.py");
+  assertEq(ultima.conteudo, "# app/a.py\n");
+  const sem = lib.arvoreParaZip(itens, { arquivos: true, comentarios: false });
+  assertEq(sem.entradas[sem.entradas.length - 1].conteudo, "", "sem comentário, o arquivo sai vazio");
+}});
+
+TESTES.push({ nome: "zip da árvore grava a pasta com barra no fim e tamanho zero", fn: () => {
+  const z = lib.arvoreParaZip(lib.parseArvore("app/\n└── a.txt").itens, { arquivos: true, comentarios: true });
+  const bytes = lib.zip(z.entradas, new Date(2026, 0, 1, 12, 0, 0));
+  const texto = new TextDecoder().decode(bytes);
+  assertTrue(texto.indexOf("app/") >= 0, "o nome da pasta aparece com a barra no fim");
+  assertTrue(texto.indexOf("# app/a.txt") < 0, ".txt não tem sintaxe de comentário, então sai vazio");
+  const v = new DataView(bytes.buffer);
+  assertEq(v.getUint32(0, true), 0x04034b50, "começa com a assinatura de cabeçalho local");
+  assertEq(v.getUint16(8, true), 0, "método store na primeira entrada");
+  assertEq(v.getUint32(18, true), 0, "a entrada de pasta tem tamanho zero");
 }});
 
 /* ---------- render provisório do runner ---------- */
@@ -2801,6 +3130,164 @@ TOOLS.push({
 
     ui.montar(el, nomes, conteudo, palpite, aviso, ui.linha(btnBaixar),
       ui.nota("Um nome baixa o arquivo direto; dois ou mais vêm num .zip, vazios. O reconhecimento preenche o campo de nomes quando ele está vazio — o nome final é sempre seu. O conteúdo baixa exatamente como está, exceto quebras de linha: o navegador sempre grava só LF, mesmo que o original tivesse CRLF."));
+    pintar();
+  }
+});
+
+const ARVORE_EXEMPLO = [
+  "linkedin-monitor-spring/",
+  "├── src/main/java/com/linkedin/monitor/",
+  "│   ├── controller/",
+  "│   │   ├── PostController.java",
+  "│   │   └── ProfileController.java",
+  "│   ├── service/",
+  "│   │   └── LinkedInScraperService.java",
+  "│   └── entity/",
+  "│       ├── Post.java",
+  "│       └── Profile.java",
+  "├── src/main/resources/",
+  "│   ├── application.properties",
+  "│   └── schema.sql",
+  "├── pom.xml",
+  "└── docker-compose.yml"
+].join("\n");
+
+// Uma colagem enorme não pode travar a página desenhando dezenas de milhares de
+// linhas; o zip continua saindo completo, só a prévia é que para de crescer.
+const ARVORE_TETO_PREVIA = 400;
+
+TOOLS.push({
+  id: "estrutura-projeto", cat: "dev", tipo: "nativa",
+  nome: "Estrutura de Projeto",
+  desc: "Cole a árvore de pastas e baixe o esqueleto do projeto num zip",
+  tags: ["arvore", "tree", "scaffold", "esqueleto", "pastas", "diretorio", "zip", "maven", "spring", "boilerplate", "estrutura", "projeto"],
+  render(el) {
+    const entrada = ui.area("Árvore do projeto", {
+      placeholder: "Cole a árvore aqui — com ├── └── │, com |-- ou só com espaços:\n\nprojeto/\n├── src/\n│   └── main.py\n└── README.md"
+    });
+    entrada.classList.add("arv-entrada");
+
+    const caixa = (texto, marcada) => {
+      const l = document.createElement("label");
+      l.className = "arv-opcao";
+      const i = document.createElement("input");
+      i.type = "checkbox"; i.checked = marcada;
+      const s = document.createElement("span"); s.textContent = texto;
+      l.appendChild(i); l.appendChild(s);
+      i.rotulo = l;
+      return i;
+    };
+    const bloco = (rotulo, no) => {
+      const w = document.createElement("div");
+      w.className = "campo";
+      const l = document.createElement("label"); l.textContent = rotulo;
+      w.appendChild(l); w.appendChild(no);
+      return w;
+    };
+
+    const optArquivos = caixa("Criar os arquivos (vazios) — desmarcado, sai só a estrutura de pastas", true);
+    const optComentarios = caixa("Escrever o caminho como comentário dentro de cada arquivo", false);
+    const opcoes = document.createElement("div");
+    opcoes.className = "arv-opcoes";
+    opcoes.appendChild(optArquivos.rotulo);
+    opcoes.appendChild(optComentarios.rotulo);
+
+    const previa = document.createElement("div"); previa.className = "arv-previa";
+    const resumo = document.createElement("div"); resumo.className = "arv-resumo";
+    const aviso = document.createElement("div"); aviso.className = "arv-aviso"; aviso.hidden = true;
+
+    const btnZip = ui.btn("Gerar .zip", () => gerar());
+    const btnExemplo = ui.btn("Exemplo", () => { entrada.value = ARVORE_EXEMPLO; pintar(); }, "secundaria");
+    const btnLimpar = ui.btn("Limpar", () => { entrada.value = ""; pintar(); entrada.focus(); }, "secundaria");
+
+    let lido = { itens: [], avisos: [], raiz: null };
+
+    const montarZip = () => lib.arvoreParaZip(lido.itens, {
+      arquivos: optArquivos.checked,
+      comentarios: optComentarios.checked
+    });
+
+    // Sem debounce de propósito: a prévia e o botão têm de falar do texto que está
+    // na tela agora, senão o zip sai com a árvore de antes da última tecla.
+    const pintar = () => {
+      lido = lib.parseArvore(entrada.value);
+
+      // Comentário só existe se houver arquivo para recebê-lo.
+      optComentarios.disabled = !optArquivos.checked;
+      optComentarios.rotulo.dataset.inativo = optArquivos.checked ? "nao" : "sim";
+
+      const { entradas, pastas, arquivos } = montarZip();
+
+      previa.innerHTML = "";
+      if (!lido.itens.length) {
+        const vazio = document.createElement("div");
+        vazio.className = "arv-nada";
+        vazio.textContent = entrada.value.trim()
+          ? "Não reconheci nenhum item nesse texto. Cada linha precisa ter um nome; o desenho à esquerda é opcional."
+          : "Cole a árvore acima — ou toque em Exemplo para ver como fica.";
+        previa.appendChild(vazio);
+      }
+      lido.itens.slice(0, ARVORE_TETO_PREVIA).forEach(it => {
+        const linha = document.createElement("div");
+        linha.className = "arv-linha";
+        linha.dataset.tipo = it.pasta ? "pasta" : "arquivo";
+        linha.style.paddingLeft = it.nivel * 22 + "px";
+        const icone = document.createElement("span");
+        icone.className = "arv-icone";
+        icone.textContent = it.pasta ? "📁" : "📄";
+        const nome = document.createElement("span");
+        nome.textContent = it.trecho + (it.pasta ? "/" : "");
+        linha.appendChild(icone); linha.appendChild(nome);
+        previa.appendChild(linha);
+      });
+      if (lido.itens.length > ARVORE_TETO_PREVIA) {
+        const resto = document.createElement("div");
+        resto.className = "arv-nada";
+        resto.textContent = "… e mais " + (lido.itens.length - ARVORE_TETO_PREVIA) +
+          " itens, que entram no zip mas não cabem na prévia.";
+        previa.appendChild(resto);
+      }
+
+      const plural = (n, um, varios) => n + " " + (n === 1 ? um : varios);
+      resumo.textContent = lido.itens.length
+        ? plural(pastas, "pasta", "pastas") + " · " + plural(arquivos, "arquivo", "arquivos") +
+          " · " + plural(entradas.length, "item no zip", "itens no zip")
+        : "";
+
+      aviso.textContent = lido.avisos.join(" ");
+      aviso.hidden = !lido.avisos.length;
+
+      btnZip.disabled = !entradas.length;
+      btnZip.textContent = entradas.length
+        ? "Gerar " + (lido.raiz || "projeto") + ".zip"
+        : "Gerar .zip";
+    };
+
+    const gerar = () => {
+      const { entradas } = montarZip();
+      if (!entradas.length) return;
+      const nomeZip = (lido.raiz || "projeto") + ".zip";
+      try {
+        const bytes = lib.zip(entradas);
+        const blob = new Blob([bytes], { type: "application/zip" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = nomeZip;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        ui.toast("Baixando " + nomeZip + " com " + entradas.length + " itens");
+      } catch (e) {
+        ui.toast("Não foi possível gerar o zip: " + e.message);
+      }
+    };
+
+    entrada.addEventListener("input", pintar);
+    optArquivos.addEventListener("change", pintar);
+    optComentarios.addEventListener("change", pintar);
+
+    ui.montar(el, entrada, bloco("Prévia", previa), resumo, aviso,
+      bloco("Opções", opcoes), ui.linha(btnZip, btnExemplo, btnLimpar),
+      ui.nota("A profundidade sai da indentação de cada linha, então o que está mais à direita entra dentro do que vem acima. Pasta é o que termina em / , o que não tem extensão, ou o que tem item abaixo; nomes como Dockerfile e Makefile contam como arquivo. Caminho comprimido numa linha só (src/main/java/) viaja inteiro e vira a sequência de pastas no zip. O zip é montado aqui no navegador, sem enviar nada para lugar nenhum."));
     pintar();
   }
 });
